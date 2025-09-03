@@ -24,6 +24,7 @@ from src.core.ftp_manager import FTPManager
 from src.core.search_worker import SearchWorker, SearchResult
 from src.utils.export_utils import ResultExporter
 from src.utils.date_utils import parse_date_range, format_date_for_display
+from src.utils.settings_manager import SettingsManager
 from config.settings import (
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, DEFAULT_FILE_PATTERN, 
     MAX_WORKER_THREADS
@@ -66,8 +67,13 @@ class MainWindow(QMainWindow):
         self.search_thread = None
         self.search_results = []
         
+        # Initialize settings manager
+        self.settings_manager = SettingsManager()
+        self.settings = self.settings_manager.load_settings()
+        
         self.init_ui()
         self.setup_connections()
+        self.load_saved_settings()
         
     def init_ui(self):
         """Initialize user interface"""
@@ -171,6 +177,11 @@ class MainWindow(QMainWindow):
         self.max_threads.setValue(MAX_WORKER_THREADS)
         search_layout.addWidget(self.max_threads, 3, 1)
         
+        # Search options
+        self.find_all_matches = QCheckBox("Find all matches per file")
+        self.find_all_matches.setToolTip("If unchecked, stops at first match per file (faster)")
+        search_layout.addWidget(self.find_all_matches, 3, 2)
+        
         layout.addWidget(search_group)
         
         # Search controls
@@ -219,14 +230,56 @@ class MainWindow(QMainWindow):
         self.ftp_password.setEchoMode(QLineEdit.Password)
         ftp_layout.addWidget(self.ftp_password, 1, 3)
         
+        # Remember password checkbox
+        self.remember_password = QCheckBox("Remember Password")
+        ftp_layout.addWidget(self.remember_password, 2, 0, 1, 2)
+        
         # Test connection button
         self.test_connection_button = QPushButton("Test Connection")
-        ftp_layout.addWidget(self.test_connection_button, 2, 0, 1, 2)
+        ftp_layout.addWidget(self.test_connection_button, 3, 0, 1, 2)
         
         self.connection_status = QLabel("Not connected")
-        ftp_layout.addWidget(self.connection_status, 2, 2, 1, 2)
+        ftp_layout.addWidget(self.connection_status, 3, 2, 1, 2)
         
         layout.addWidget(ftp_group)
+        
+        # Directory structure group
+        dir_group = QGroupBox("FTP Directory Structure")
+        dir_layout = QGridLayout(dir_group)
+        
+        dir_layout.addWidget(QLabel("Source Directory:"), 0, 0)
+        self.source_directory = QLineEdit()
+        self.source_directory.setPlaceholderText("SAMSUNG")
+        dir_layout.addWidget(self.source_directory, 0, 1, 1, 2)
+        
+        dir_layout.addWidget(QLabel("Send File Directory:"), 1, 0)
+        self.send_file_directory = QLineEdit()
+        self.send_file_directory.setPlaceholderText("Send File")
+        dir_layout.addWidget(self.send_file_directory, 1, 1, 1, 2)
+        
+        dir_layout.addWidget(QLabel("Receive File Directory:"), 2, 0)
+        self.receive_file_directory = QLineEdit()
+        self.receive_file_directory.setPlaceholderText("Receive File")
+        dir_layout.addWidget(self.receive_file_directory, 2, 1, 1, 2)
+        
+        # Directory structure help text
+        help_label = QLabel("Directory structure: /{Source}/{YYYYMMDD}/{Send File}/files.xml")
+        help_label.setStyleSheet("color: #666; font-style: italic;")
+        dir_layout.addWidget(help_label, 3, 0, 1, 3)
+        
+        layout.addWidget(dir_group)
+        
+        # Settings controls
+        settings_controls = QHBoxLayout()
+        
+        self.save_settings_button = QPushButton("Save Settings")
+        settings_controls.addWidget(self.save_settings_button)
+        
+        self.reset_settings_button = QPushButton("Reset to Defaults")
+        settings_controls.addWidget(self.reset_settings_button)
+        
+        settings_controls.addStretch()
+        layout.addLayout(settings_controls)
         layout.addStretch()
         
         # Add to tab
@@ -287,6 +340,10 @@ class MainWindow(QMainWindow):
         
         # FTP settings
         self.test_connection_button.clicked.connect(self.test_ftp_connection)
+        
+        # Settings controls
+        self.save_settings_button.clicked.connect(self.save_settings)
+        self.reset_settings_button.clicked.connect(self.reset_settings)
         
         # Date range
         self.date_range_combo.currentTextChanged.connect(self.on_date_range_changed)
@@ -361,7 +418,11 @@ class MainWindow(QMainWindow):
             'search_mode': self.search_mode.currentText().lower().replace(' ', '_'),
             'case_sensitive': self.case_sensitive.isChecked(),
             'file_pattern': self.file_pattern.text().strip() or None,
-            'max_threads': self.max_threads.value()
+            'max_threads': self.max_threads.value(),
+            'find_all_matches': self.find_all_matches.isChecked(),
+            # Add directory settings
+            'source_directory': self.source_directory.text().strip() or 'SAMSUNG',
+            'send_file_directory': self.send_file_directory.text().strip() or 'Send File'
         }
         
         # Convert search mode
@@ -539,3 +600,99 @@ class MainWindow(QMainWindow):
         # Clean up FTP connection
         if self.ftp_manager:
             self.ftp_manager.disconnect()
+    
+    def load_saved_settings(self):
+        """Load saved settings into UI"""
+        try:
+            # Load FTP settings
+            ftp_settings = self.settings.get('ftp', {})
+            self.ftp_host.setText(ftp_settings.get('host', ''))
+            self.ftp_port.setValue(ftp_settings.get('port', 21))
+            self.ftp_username.setText(ftp_settings.get('username', ''))
+            
+            # Load password only if remember_password is enabled
+            if ftp_settings.get('remember_password', False):
+                self.ftp_password.setText(ftp_settings.get('password', ''))
+                self.remember_password.setChecked(True)
+            
+            # Load directory settings
+            dir_settings = self.settings.get('directories', {})
+            self.source_directory.setText(dir_settings.get('source_directory', 'SAMSUNG'))
+            self.send_file_directory.setText(dir_settings.get('send_file_directory', 'Send File'))
+            self.receive_file_directory.setText(dir_settings.get('receive_file_directory', 'Receive File'))
+            
+            # Load search settings
+            search_settings = self.settings.get('search', {})
+            self.file_pattern.setText(search_settings.get('default_file_pattern', 'TCO_*_KMC_*.xml'))
+            self.case_sensitive.setChecked(search_settings.get('case_sensitive', False))
+            self.find_all_matches.setChecked(search_settings.get('find_all_matches', False))
+            self.max_threads.setValue(search_settings.get('max_threads', 8))
+            
+            # Load UI settings
+            ui_settings = self.settings.get('ui', {})
+            last_date_range = ui_settings.get('last_date_range', 'Last 7 Days')
+            index = self.date_range_combo.findText(last_date_range)
+            if index >= 0:
+                self.date_range_combo.setCurrentIndex(index)
+            
+            last_search_mode = ui_settings.get('last_search_mode', 'Text Contains')
+            index = self.search_mode.findText(last_search_mode)
+            if index >= 0:
+                self.search_mode.setCurrentIndex(index)
+                
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+    
+    def save_settings(self):
+        """Save current settings"""
+        try:
+            # Update settings from UI
+            self.settings['ftp'] = {
+                'host': self.ftp_host.text().strip(),
+                'port': self.ftp_port.value(),
+                'username': self.ftp_username.text().strip(),
+                'password': self.ftp_password.text() if self.remember_password.isChecked() else '',
+                'remember_password': self.remember_password.isChecked()
+            }
+            
+            self.settings['directories'] = {
+                'source_directory': self.source_directory.text().strip() or 'SAMSUNG',
+                'send_file_directory': self.send_file_directory.text().strip() or 'Send File',
+                'receive_file_directory': self.receive_file_directory.text().strip() or 'Receive File'
+            }
+            
+            self.settings['search'] = {
+                'default_file_pattern': self.file_pattern.text().strip() or 'TCO_*_KMC_*.xml',
+                'case_sensitive': self.case_sensitive.isChecked(),
+                'find_all_matches': self.find_all_matches.isChecked(),
+                'max_threads': self.max_threads.value()
+            }
+            
+            self.settings['ui'] = {
+                'last_date_range': self.date_range_combo.currentText(),
+                'last_search_mode': self.search_mode.currentText()
+            }
+            
+            # Save to file
+            if self.settings_manager.save_settings(self.settings):
+                QMessageBox.information(self, "Success", "Settings saved successfully!")
+            else:
+                QMessageBox.warning(self, "Warning", "Failed to save settings.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error saving settings: {str(e)}")
+    
+    def reset_settings(self):
+        """Reset settings to defaults"""
+        reply = QMessageBox.question(
+            self, "Confirm Reset", 
+            "Are you sure you want to reset all settings to defaults?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Reset to defaults
+            self.settings = self.settings_manager.default_settings.copy()
+            self.load_saved_settings()
+            QMessageBox.information(self, "Success", "Settings reset to defaults!")

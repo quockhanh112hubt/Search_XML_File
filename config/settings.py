@@ -14,6 +14,11 @@ DEFAULT_CHUNK_SIZE = 256 * 1024  # 256KB
 CHUNK_OVERLAP_SIZE = 1024  # 1KB overlap for boundary matches
 MAX_FILE_SIZE_MB = 50  # Skip files larger than this
 
+# Search behavior
+EARLY_TERMINATION_PER_FILE = True  # Stop searching file after first match
+MAX_RESULTS_LIMIT = 0  # 0 = no limit, otherwise set max number of results
+SEARCH_ALL_FILES = True  # Continue searching even after finding matches
+
 # Default file patterns
 DEFAULT_FILE_PATTERN = "TCO_*_KMC_*.xml"
 XML_EXTENSIONS = ['.xml']

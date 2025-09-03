@@ -163,10 +163,13 @@ class FTPManager:
             self.pool.close_all()
         self.is_connected = False
         
-    def list_date_directories(self, start_date, end_date) -> List[str]:
+    def list_date_directories(self, start_date, end_date, source_directory: str = None) -> List[str]:
         """List directories within date range"""
         if not self.is_connected:
             return []
+        
+        # Use provided source directory or default
+        source_dir = source_directory or SOURCE_DIRECTORY
         
         # Convert date objects to datetime if needed
         if hasattr(start_date, 'date'):
@@ -189,7 +192,7 @@ class FTPManager:
             
         try:
             # Navigate to source directory
-            conn.ftp.cwd(f"/{SOURCE_DIRECTORY}")
+            conn.ftp.cwd(f"/{source_dir}")
             
             # Get all directories
             dirs = []
@@ -217,10 +220,15 @@ class FTPManager:
         finally:
             self.pool.return_connection(conn)
     
-    def list_xml_files(self, date_dir: str, file_pattern: str = None) -> List[Tuple[str, int]]:
+    def list_xml_files(self, date_dir: str, file_pattern: str = None, 
+                      source_directory: str = None, send_file_directory: str = None) -> List[Tuple[str, int]]:
         """List XML files in Send File directory for specific date"""
         if not self.is_connected:
             return []
+        
+        # Use provided directories or defaults
+        source_dir = source_directory or SOURCE_DIRECTORY
+        send_file_dir = send_file_directory or SEND_FILE_DIRECTORY
             
         conn = self.pool.get_connection()
         if not conn:
@@ -228,7 +236,7 @@ class FTPManager:
             
         try:
             # Navigate to Send File directory
-            path = f"/{SOURCE_DIRECTORY}/{date_dir}/{SEND_FILE_DIRECTORY}"
+            path = f"/{source_dir}/{date_dir}/{send_file_dir}"
             conn.ftp.cwd(path)
             
             # Get file list with sizes
@@ -261,10 +269,15 @@ class FTPManager:
         finally:
             self.pool.return_connection(conn)
     
-    def get_file_stream(self, date_dir: str, filename: str):
+    def get_file_stream(self, date_dir: str, filename: str, 
+                       source_directory: str = None, send_file_directory: str = None):
         """Get file stream for reading"""
         if not self.is_connected:
             return None, None
+        
+        # Use provided directories or defaults
+        source_dir = source_directory or SOURCE_DIRECTORY
+        send_file_dir = send_file_directory or SEND_FILE_DIRECTORY
             
         conn = self.pool.get_connection()
         if not conn:
@@ -272,7 +285,7 @@ class FTPManager:
             
         try:
             # Navigate to file directory
-            path = f"/{SOURCE_DIRECTORY}/{date_dir}/{SEND_FILE_DIRECTORY}"
+            path = f"/{source_dir}/{date_dir}/{send_file_dir}"
             conn.ftp.cwd(path)
             
             # Return connection and callback for streaming

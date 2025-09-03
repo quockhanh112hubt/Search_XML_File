@@ -67,7 +67,8 @@ class TextSearchEngine:
             self.aho_corasick.make_automaton()
     
     def search_in_stream(self, stream_func, date_dir: str, filename: str,
-                        chunk_size: int = DEFAULT_CHUNK_SIZE) -> Optional[SearchResult]:
+                        chunk_size: int = DEFAULT_CHUNK_SIZE, 
+                        early_termination: bool = True) -> Optional[SearchResult]:
         """Search in file stream using chunked reading"""
         buffer = b""
         line_number = 1
@@ -76,21 +77,26 @@ class TextSearchEngine:
         try:
             def chunk_callback(data):
                 nonlocal buffer, line_number, found_result
-                if found_result:  # Already found a match, stop processing
+                
+                # Skip processing if we already found result and want early termination
+                if found_result and early_termination:
                     return
                     
                 buffer += data
                 
-                # Process complete chunks
-                while len(buffer) >= chunk_size and not found_result:
+                # Process complete chunks (but only if we haven't found result or not using early termination)
+                while len(buffer) >= chunk_size and (not found_result or not early_termination):
                     chunk = buffer[:chunk_size]
                     buffer = buffer[chunk_size - CHUNK_OVERLAP_SIZE:]
                     
                     # Search in chunk
                     result = self._search_in_chunk(chunk, date_dir, filename, line_number)
                     if result:
-                        found_result = result
-                        return  # Early termination
+                        if not found_result:  # Take first result found
+                            found_result = result
+                            if early_termination:
+                                # Don't process more chunks, but can't stop stream here
+                                break
                     
                     # Update line number
                     line_number += chunk.count(b'\n')
@@ -102,8 +108,8 @@ class TextSearchEngine:
             if found_result:
                 return found_result
             
-            # Process remaining buffer
-            if buffer and not found_result:
+            # Process remaining buffer if no result found yet
+            if buffer:
                 return self._search_in_chunk(buffer, date_dir, filename, line_number)
                 
         except Exception as e:

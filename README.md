@@ -27,6 +27,24 @@
 └── ...
 ```
 
+## ✨ **Tính năng mới v1.1**
+
+### 🔧 **Dynamic Directory Configuration**
+- **Configurable Directories**: Có thể thay đổi tên thư mục source, send file, receive file
+- **Custom FTP Structure**: Hỗ trợ các cấu trúc FTP khác nhau
+- **Visual Directory Helper**: Hiển thị cấu trúc thư mục hiện tại
+
+### 💾 **Settings Persistence**
+- **Auto-save Settings**: Tự động lưu các cấu hình người dùng
+- **Remember Credentials**: Tùy chọn lưu thông tin đăng nhập FTP
+- **Reset to Defaults**: Nút reset về cài đặt mặc định
+- **Settings File**: Lưu trong `user_settings.json`
+
+### 🎯 **Improved User Experience**
+- **Last Used Settings**: Ghi nhớ date range và search mode cuối cùng
+- **Smart Defaults**: Tự động điền các giá trị mặc định phù hợp
+- **Error Prevention**: Validation và fallback cho các settings
+
 ## Cài đặt
 
 1. **Clone repository**:
@@ -56,15 +74,21 @@ python main.py
 
 ## Sử dụng
 
-### 1. Cấu hình FTP Connection
+### 1. Cấu hình FTP Connection và Directories
 
 1. Mở tab **Settings**
-2. Nhập thông tin FTP:
-   - FTP Host
-   - Port (mặc định: 21)
-   - Username
-   - Password
-3. Click **Test Connection** để kiểm tra kết nối
+2. **FTP Connection**:
+   - FTP Host: Địa chỉ server
+   - Port: Cổng kết nối (mặc định: 21)
+   - Username: Tên đăng nhập
+   - Password: Mật khẩu
+   - ☑️ Remember Password: Lưu mật khẩu (không khuyến nghị trên máy dùng chung)
+3. **FTP Directory Structure**:
+   - Source Directory: Thư mục gốc (mặc định: "SAMSUNG")
+   - Send File Directory: Thư mục chứa XML files (mặc định: "Send File")
+   - Receive File Directory: Thư mục nhận files (mặc định: "Receive File")
+4. Click **Test Connection** để kiểm tra kết nối
+5. Click **Save Settings** để lưu cấu hình
 
 ### 2. Thiết lập tìm kiếm
 

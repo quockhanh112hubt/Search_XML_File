@@ -110,6 +110,11 @@ class SearchWorker:
             case_sensitive = search_params.get('case_sensitive', False)
             file_pattern = search_params.get('file_pattern', '')
             max_threads = search_params.get('max_threads', MAX_WORKER_THREADS)
+            find_all_matches = search_params.get('find_all_matches', False)
+            
+            # Extract directory settings
+            source_directory = search_params.get('source_directory', 'SAMSUNG')
+            send_file_directory = search_params.get('send_file_directory', 'Send File')
             
             # Validate parameters
             if not keywords:
@@ -117,7 +122,9 @@ class SearchWorker:
             
             # Get date directories
             logger.info(f"Searching from {start_date} to {end_date}")
-            date_directories = self.ftp_manager.list_date_directories(start_date, end_date)
+            date_directories = self.ftp_manager.list_date_directories(
+                start_date, end_date, source_directory
+            )
             
             if not date_directories:
                 logger.warning("No directories found in date range")
@@ -131,18 +138,28 @@ class SearchWorker:
                 if self.stop_event.is_set():
                     break
                     
-                files = self.ftp_manager.list_xml_files(date_dir, file_pattern)
+                files = self.ftp_manager.list_xml_files(
+                    date_dir, file_pattern, source_directory, send_file_directory
+                )
                 for filename, file_size in files:
                     # Skip very large files
                     if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
                         logger.warning(f"Skipping large file: {filename} ({file_size} bytes)")
                         continue
                     
-                    all_tasks.append((date_dir, filename, file_size))
+                    all_tasks.append((date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches))
                     total_files += 1
             
             # Initialize progress
             self.progress.set_totals(len(date_directories), total_files)
+            
+            # Log search info
+            logger.info(f"Found {len(date_directories)} directories with {total_files} XML files to search")
+            logger.info(f"Directories: {date_directories}")
+            
+            if total_files == 0:
+                logger.warning("No XML files found to search")
+                return []
             
             # Create search engine
             search_engine = self._create_search_engine(keywords, search_mode, case_sensitive)
@@ -161,7 +178,7 @@ class SearchWorker:
                         break
                         
                     task = future_to_task[future]
-                    date_dir, filename, _ = task
+                    date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches = task
                     
                     try:
                         result = future.result()
@@ -169,6 +186,9 @@ class SearchWorker:
                             with self.results_lock:
                                 self.results.append(result)
                             self.progress.add_match()
+                            logger.debug(f"Match found in {filename}: {result.match_type}")
+                        else:
+                            logger.debug(f"No match in {filename}")
                         
                         self.progress.update_file(filename)
                         
@@ -204,20 +224,23 @@ class SearchWorker:
     
     def _search_file(self, task, search_engine) -> Optional[SearchResult]:
         """Search a single file"""
-        date_dir, filename, file_size = task
+        date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches = task
         
         if self.stop_event.is_set():
             return None
             
         try:
             # Get file stream
-            conn, stream_func = self.ftp_manager.get_file_stream(date_dir, filename)
+            conn, stream_func = self.ftp_manager.get_file_stream(
+                date_dir, filename, source_directory, send_file_directory
+            )
             if not conn or not stream_func:
                 return None
-            
+
             try:
-                # Search in stream
-                result = search_engine.search_in_stream(stream_func, date_dir, filename)
+                # Search in stream with early termination control
+                early_termination = not find_all_matches  # Invert: if find_all_matches=True, early_termination=False
+                result = search_engine.search_in_stream(stream_func, date_dir, filename, early_termination)
                 return result
                 
             finally:
@@ -227,7 +250,7 @@ class SearchWorker:
         except Exception as e:
             logger.error(f"Error searching file {filename}: {e}")
             return None
-    
+
     def stop(self):
         """Stop the search operation"""
         self.stop_event.set()
