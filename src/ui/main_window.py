@@ -456,12 +456,29 @@ class MainWindow(QMainWindow):
         self.results_table.setRowCount(len(self.search_results))
         
         for row, result in enumerate(self.search_results):
-            self.results_table.setItem(row, 0, QTableWidgetItem(result.date_dir))
-            self.results_table.setItem(row, 1, QTableWidgetItem(result.filename))
-            self.results_table.setItem(row, 2, QTableWidgetItem(result.file_path))
-            self.results_table.setItem(row, 3, QTableWidgetItem(result.match_type))
-            self.results_table.setItem(row, 4, QTableWidgetItem(result.match_content))
-            self.results_table.setItem(row, 5, QTableWidgetItem(str(result.line_number)))
+            try:
+                # Check if result is a SearchResult object
+                if hasattr(result, 'date_dir'):
+                    self.results_table.setItem(row, 0, QTableWidgetItem(result.date_dir))
+                    self.results_table.setItem(row, 1, QTableWidgetItem(result.filename))
+                    self.results_table.setItem(row, 2, QTableWidgetItem(result.file_path))
+                    self.results_table.setItem(row, 3, QTableWidgetItem(result.match_type))
+                    self.results_table.setItem(row, 4, QTableWidgetItem(result.match_content))
+                    self.results_table.setItem(row, 5, QTableWidgetItem(str(result.line_number)))
+                else:
+                    # Handle unexpected result type
+                    print(f"Warning: Unexpected result type: {type(result)} = {result}")
+                    self.results_table.setItem(row, 0, QTableWidgetItem("Unknown"))
+                    self.results_table.setItem(row, 1, QTableWidgetItem(str(result)))
+                    self.results_table.setItem(row, 2, QTableWidgetItem(""))
+                    self.results_table.setItem(row, 3, QTableWidgetItem("Error"))
+                    self.results_table.setItem(row, 4, QTableWidgetItem(""))
+                    self.results_table.setItem(row, 5, QTableWidgetItem("0"))
+            except Exception as e:
+                print(f"Error updating row {row}: {e}")
+                # Fill with empty values to prevent crashes
+                for col in range(6):
+                    self.results_table.setItem(row, col, QTableWidgetItem(""))
     
     def update_results_count(self):
         """Update results count label"""

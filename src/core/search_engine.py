@@ -71,34 +71,39 @@ class TextSearchEngine:
         """Search in file stream using chunked reading"""
         buffer = b""
         line_number = 1
+        found_result = None
         
         try:
             def chunk_callback(data):
-                nonlocal buffer, line_number
+                nonlocal buffer, line_number, found_result
+                if found_result:  # Already found a match, stop processing
+                    return
+                    
                 buffer += data
                 
                 # Process complete chunks
-                while len(buffer) >= chunk_size:
+                while len(buffer) >= chunk_size and not found_result:
                     chunk = buffer[:chunk_size]
                     buffer = buffer[chunk_size - CHUNK_OVERLAP_SIZE:]
                     
                     # Search in chunk
                     result = self._search_in_chunk(chunk, date_dir, filename, line_number)
                     if result:
-                        return result  # Early termination
+                        found_result = result
+                        return  # Early termination
                     
                     # Update line number
                     line_number += chunk.count(b'\n')
-                
-                return None
             
             # Process stream
-            result = stream_func(chunk_callback)
-            if result:
-                return result
+            stream_func(chunk_callback)
+            
+            # If we found a result during streaming, return it
+            if found_result:
+                return found_result
             
             # Process remaining buffer
-            if buffer:
+            if buffer and not found_result:
                 return self._search_in_chunk(buffer, date_dir, filename, line_number)
                 
         except Exception as e:

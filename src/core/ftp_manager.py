@@ -163,10 +163,25 @@ class FTPManager:
             self.pool.close_all()
         self.is_connected = False
         
-    def list_date_directories(self, start_date: datetime, end_date: datetime) -> List[str]:
+    def list_date_directories(self, start_date, end_date) -> List[str]:
         """List directories within date range"""
         if not self.is_connected:
             return []
+        
+        # Convert date objects to datetime if needed
+        if hasattr(start_date, 'date'):
+            # It's already a datetime object
+            start_dt = start_date
+        else:
+            # It's a date object, convert to datetime
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            
+        if hasattr(end_date, 'date'):
+            # It's already a datetime object
+            end_dt = end_date
+        else:
+            # It's a date object, convert to datetime
+            end_dt = datetime.combine(end_date, datetime.max.time())
             
         conn = self.pool.get_connection()
         if not conn:
@@ -189,7 +204,7 @@ class FTPManager:
                     if len(dirname) == 8 and dirname.isdigit():
                         try:
                             dir_date = datetime.strptime(dirname, "%Y%m%d")
-                            if start_date <= dir_date <= end_date:
+                            if start_dt <= dir_date <= end_dt:
                                 date_dirs.append(dirname)
                         except ValueError:
                             continue
