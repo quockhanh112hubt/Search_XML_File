@@ -9,9 +9,21 @@ import logging
 from typing import List, Optional, Generator, Tuple, Dict, Any
 from xml.etree import ElementTree as ET
 from xml.etree.ElementTree import iterparse
-import ahocorasick
+
+# Try to import ahocorasick, fallback to basic search if not available
+try:
+    import ahocorasick
+    HAS_AHOCORASICK = True
+except ImportError:
+    HAS_AHOCORASICK = False
 
 from config.settings import DEFAULT_CHUNK_SIZE, CHUNK_OVERLAP_SIZE
+
+logger = logging.getLogger(__name__)
+
+# Log ahocorasick availability after logger is defined
+if not HAS_AHOCORASICK:
+    logger.warning("ahocorasick not available, using basic string search")
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +71,20 @@ class TextSearchEngine:
                     pattern = re.compile(escaped, flags)
                     self.compiled_patterns.append(pattern)
         else:
-            # Use Aho-Corasick for multiple string matching
-            self.aho_corasick = ahocorasick.Automaton()
+            # Use Aho-Corasick for multiple string matching if available
+            if HAS_AHOCORASICK:
+                self.aho_corasick = ahocorasick.Automaton()
+            else:
+                self.aho_corasick = None
+                # Prepare keywords for basic search
+                if not self.case_sensitive:
+                    self.keywords = [k.lower() for k in self.keywords]
             for idx, keyword in enumerate(self.keywords):
                 search_word = keyword if self.case_sensitive else keyword.lower()
-                self.aho_corasick.add_word(search_word, (idx, keyword))
-            self.aho_corasick.make_automaton()
+                if self.aho_corasick:  # Only if ahocorasick is available
+                    self.aho_corasick.add_word(search_word, (idx, keyword))
+            if self.aho_corasick:
+                self.aho_corasick.make_automaton()
     
     def search_in_stream(self, stream_func, date_dir: str, filename: str,
                         chunk_size: int = DEFAULT_CHUNK_SIZE, 
@@ -150,20 +170,39 @@ class TextSearchEngine:
                             match.group(), match_line
                         )
             else:
-                # Aho-Corasick multi-string search
-                for end_index, (keyword_idx, original_keyword) in self.aho_corasick.iter(search_text):
-                    start_index = end_index - len(original_keyword) + 1
-                    match_line = line_number + search_text[:start_index].count('\n')
-                    
-                    # Get context around match
-                    context_start = max(0, start_index - 50)
-                    context_end = min(len(text), end_index + 50)
-                    context = text[context_start:context_end].strip()
-                    
-                    return SearchResult(
-                        date_dir, filename, "Text Match",
-                        context, match_line
-                    )
+                # Aho-Corasick multi-string search or fallback to basic search
+                if self.aho_corasick:
+                    # Use Aho-Corasick
+                    for end_index, (keyword_idx, original_keyword) in self.aho_corasick.iter(search_text):
+                        start_index = end_index - len(original_keyword) + 1
+                        match_line = line_number + search_text[:start_index].count('\n')
+                        
+                        # Get context around match
+                        context_start = max(0, start_index - 50)
+                        context_end = min(len(text), end_index + 50)
+                        context = text[context_start:context_end].strip()
+                        
+                        return SearchResult(
+                            date_dir, filename, "Text Match",
+                            context, match_line
+                        )
+                else:
+                    # Fallback to basic string search
+                    for keyword in self.keywords:
+                        search_keyword = keyword if self.case_sensitive else keyword.lower()
+                        if search_keyword in search_text:
+                            index = search_text.find(search_keyword)
+                            match_line = line_number + search_text[:index].count('\n')
+                            
+                            # Get context around match
+                            context_start = max(0, index - 50)
+                            context_end = min(len(text), index + len(search_keyword) + 50)
+                            context = text[context_start:context_end].strip()
+                            
+                            return SearchResult(
+                                date_dir, filename, "Text Match",
+                                context, match_line
+                            )
                     
         except Exception as e:
             logger.error(f"Error processing chunk: {e}")
