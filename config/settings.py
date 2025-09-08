@@ -7,7 +7,7 @@ FTP_RETRY_DELAY = 1  # seconds
 
 # Threading Settings
 MAX_WORKER_THREADS = 8
-FTP_CONNECTION_POOL_SIZE = 5
+FTP_CONNECTION_POOL_SIZE = 10  # Increased to handle more concurrent connections
 
 # Search Settings
 DEFAULT_CHUNK_SIZE = 256 * 1024  # 256KB

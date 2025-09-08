@@ -5,6 +5,7 @@ Handles multi-threaded search operations
 
 import time
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue, Empty
 from threading import Event, Lock
@@ -235,18 +236,18 @@ class SearchWorker:
             )
     
     def _search_file(self, task, search_engine) -> Optional[SearchResult]:
-        """Search a single file with proper connection management"""
+        """Search a single file with proper connection management (thread-safe)"""
         date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches = task
         
         if self.stop_event.is_set():
-            logger.info(f"⏹ Stopping search for {filename} (stop requested)")
+            logger.debug(f"⏹ Stopping search for {filename} (stop requested)")
             return None
             
         conn = None
         try:
-            logger.info(f"🔌 Getting FTP connection for {filename}...")
+            logger.debug(f"🔌 [T{threading.current_thread().ident % 10000}] Getting FTP connection for {filename}...")
             
-            # Get file stream
+            # Get file stream from connection pool
             conn, stream_func = self.ftp_manager.get_file_stream(
                 date_dir, filename, source_directory, send_file_directory
             )
@@ -254,34 +255,28 @@ class SearchWorker:
                 logger.warning(f"❌ Could not get stream for {filename}")
                 return None
 
-            logger.info(f"🔍 Starting search in {filename}...")
+            logger.debug(f"🔍 [T{threading.current_thread().ident % 10000}] Starting search in {filename}...")
             
-            # Search in stream with early termination control and smaller chunk size
-            early_termination = not find_all_matches  # Invert: if find_all_matches=True, early_termination=False
-            
-            # Use smaller chunk size for large files to avoid hanging
-            chunk_size = 64 * 1024 if file_size > 100 * 1024 else 256 * 1024  # 64KB for large files, 256KB for small
-            
-            logger.info(f"Using chunk size: {chunk_size} bytes for file size: {file_size} bytes")
+            # Search in stream with early termination control and smaller chunk size for large files
+            early_termination = not find_all_matches
+            chunk_size = 64 * 1024 if file_size > 100 * 1024 else 256 * 1024
             
             result = search_engine.search_in_stream(
                 stream_func, date_dir, filename, chunk_size, early_termination
             )
             
-            logger.info(f"✅ Search completed for {filename}, result: {'Found' if result else 'Not found'}")
+            logger.debug(f"✅ [T{threading.current_thread().ident % 10000}] Search completed for {filename}, result: {'Found' if result else 'Not found'}")
             return result
                 
         except Exception as e:
-            logger.error(f"💥 Error searching file {filename}: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"💥 [T{threading.current_thread().ident % 10000}] Error searching file {filename}: {e}")
             return None
         finally:
-            # Always release connection
+            # Always release connection back to pool
             if conn:
                 try:
                     self.ftp_manager.release_file_stream(conn)
-                    logger.info(f"🔌 Released connection for {filename}")
+                    logger.debug(f"🔌 [T{threading.current_thread().ident % 10000}] Released connection for {filename}")
                 except Exception as e:
                     logger.error(f"💥 Error releasing connection for {filename}: {e}")
 

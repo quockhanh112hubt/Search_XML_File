@@ -29,6 +29,7 @@ from config.settings import (
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT, DEFAULT_FILE_PATTERN, 
     MAX_WORKER_THREADS
 )
+from src.ui.styles import COMPLETE_STYLESHEET, BUTTON_STYLES, COLORS
 
 class SearchThread(QThread):
     """Background search thread"""
@@ -78,8 +79,11 @@ class MainWindow(QMainWindow):
         
     def init_ui(self):
         """Initialize user interface"""
-        self.setWindowTitle("XML Search Tool - FTP Server File Search")
+        self.setWindowTitle("🔍 XML Search Tool - Professional Dark Edition")
         self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
+        
+        # Apply modern dark stylesheet
+        self.setStyleSheet(COMPLETE_STYLESHEET)
         
         # Central widget
         central_widget = QWidget()
@@ -99,15 +103,40 @@ class MainWindow(QMainWindow):
         
         # Status bar
         self.status_bar = QStatusBar()
+        self.status_bar.setStyleSheet(f"""
+            QStatusBar {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text_primary']};
+                border-top: 1px solid {COLORS['border']};
+                font-weight: 500;
+            }}
+        """)
         self.setStatusBar(self.status_bar)
         
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 2px solid {COLORS['border']};
+                border-radius: 8px;
+                text-align: center;
+                background-color: {COLORS['bg_secondary']};
+                color: {COLORS['text_primary']};
+                font-weight: bold;
+                min-height: 20px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {COLORS['primary']};
+                border-radius: 6px;
+                margin: 1px;
+            }}
+        """)
         self.status_bar.addPermanentWidget(self.progress_bar)
         
         # Status label
         self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: bold; padding: 5px;")
         self.status_bar.addWidget(self.status_label)
         
     def create_search_tab(self):
@@ -170,6 +199,7 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.search_mode, 2, 1)
         
         self.case_sensitive = QCheckBox("Case Sensitive")
+        self.setup_custom_checkbox(self.case_sensitive)
         search_layout.addWidget(self.case_sensitive, 2, 2)
         
         search_layout.addWidget(QLabel("Max Threads:"), 3, 0)
@@ -180,6 +210,7 @@ class MainWindow(QMainWindow):
         
         # Search options
         self.find_all_matches = QCheckBox("Find all matches per file")
+        self.setup_custom_checkbox(self.find_all_matches)
         self.find_all_matches.setToolTip("If unchecked, stops at first match per file (faster)")
         search_layout.addWidget(self.find_all_matches, 3, 2)
         
@@ -189,10 +220,13 @@ class MainWindow(QMainWindow):
         controls_layout = QHBoxLayout()
         
         self.search_button = QPushButton("Start Search")
-        self.search_button.setStyleSheet("QPushButton { font-weight: bold; }")
+        self.search_button.setStyleSheet(BUTTON_STYLES['primary'])
+        self.search_button.setMinimumHeight(35)
         controls_layout.addWidget(self.search_button)
         
         self.stop_button = QPushButton("Stop Search")
+        self.stop_button.setStyleSheet(BUTTON_STYLES['error'])
+        self.stop_button.setMinimumHeight(35)
         self.stop_button.setEnabled(False)
         controls_layout.addWidget(self.stop_button)
         
@@ -233,14 +267,17 @@ class MainWindow(QMainWindow):
         
         # Remember password checkbox
         self.remember_password = QCheckBox("Remember Password")
+        self.setup_custom_checkbox(self.remember_password)
         ftp_layout.addWidget(self.remember_password, 2, 0, 1, 2)
         
         # Connection button (Connect/Disconnect)  
         self.connect_button = QPushButton("Connect")
+        self.connect_button.setStyleSheet(BUTTON_STYLES['success'])
+        self.connect_button.setMinimumHeight(35)
         ftp_layout.addWidget(self.connect_button, 3, 0, 1, 2)
         
         self.connection_status = QLabel("Not connected")
-        self.connection_status.setStyleSheet("color: red;")
+        self.connection_status.setStyleSheet(f"color: {COLORS['error']}; font-weight: bold;")
         ftp_layout.addWidget(self.connection_status, 3, 2, 1, 2)
         
         layout.addWidget(ftp_group)
@@ -275,9 +312,13 @@ class MainWindow(QMainWindow):
         settings_controls = QHBoxLayout()
         
         self.save_settings_button = QPushButton("Save Settings")
+        self.save_settings_button.setStyleSheet(BUTTON_STYLES['primary'])
+        self.save_settings_button.setMinimumHeight(32)
         settings_controls.addWidget(self.save_settings_button)
         
         self.reset_settings_button = QPushButton("Reset to Defaults")
+        self.reset_settings_button.setStyleSheet(BUTTON_STYLES['secondary'])
+        self.reset_settings_button.setMinimumHeight(32)
         settings_controls.addWidget(self.reset_settings_button)
         
         settings_controls.addStretch()
@@ -296,15 +337,20 @@ class MainWindow(QMainWindow):
         controls_layout = QHBoxLayout()
         
         self.results_count_label = QLabel("Results: 0")
+        self.results_count_label.setStyleSheet(f"font-weight: bold; color: {COLORS['text_primary']}; font-size: 12px;")
         controls_layout.addWidget(self.results_count_label)
         
         controls_layout.addStretch()
         
         self.export_csv_button = QPushButton("Export CSV")
+        self.export_csv_button.setStyleSheet(BUTTON_STYLES['secondary'])
+        self.export_csv_button.setMinimumHeight(32)
         self.export_csv_button.setEnabled(False)
         controls_layout.addWidget(self.export_csv_button)
         
         self.export_excel_button = QPushButton("Export Excel")
+        self.export_excel_button.setStyleSheet(BUTTON_STYLES['secondary'])
+        self.export_excel_button.setMinimumHeight(32)
         self.export_excel_button.setEnabled(False)
         controls_layout.addWidget(self.export_excel_button)
         
@@ -325,6 +371,11 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Match Type
         header.setSectionResizeMode(4, QHeaderView.Stretch)           # Match Content
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Line
+        
+        # Configure vertical header (row numbers)
+        v_header = self.results_table.verticalHeader()
+        v_header.setVisible(True)
+        v_header.setDefaultSectionSize(40)
         
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -354,6 +405,69 @@ class MainWindow(QMainWindow):
         self.export_csv_button.clicked.connect(self.export_csv)
         self.export_excel_button.clicked.connect(self.export_excel)
         
+    def update_connection_status(self, text: str, status_type: str = 'error'):
+        """Update connection status with proper styling"""
+        color_map = {
+            'success': COLORS['success'],
+            'error': COLORS['error'],
+            'warning': COLORS['warning'],
+            'info': COLORS['text_secondary']
+        }
+        color = color_map.get(status_type, COLORS['error'])
+        self.connection_status.setText(text)
+        self.connection_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+    
+    def setup_custom_checkbox(self, checkbox):
+        """Setup custom checkbox with checkmark display"""
+        def update_checkbox_style():
+            if checkbox.isChecked():
+                checkbox.setText(f"✓ {checkbox.text().replace('✓ ', '')}")
+                checkbox.setStyleSheet(f"""
+                    QCheckBox {{
+                        color: {COLORS['primary']};
+                        font-weight: 600;
+                    }}
+                    QCheckBox::indicator {{
+                        width: 22px;
+                        height: 22px;
+                        border: 2px solid {COLORS['primary']};
+                        border-radius: 6px;
+                        background-color: {COLORS['primary']};
+                    }}
+                """)
+            else:
+                checkbox.setText(checkbox.text().replace('✓ ', ''))
+                checkbox.setStyleSheet(f"""
+                    QCheckBox {{
+                        color: {COLORS['text_primary']};
+                        font-weight: 500;
+                    }}
+                    QCheckBox::indicator {{
+                        width: 22px;
+                        height: 22px;
+                        border: 2px solid {COLORS['border']};
+                        border-radius: 6px;
+                        background-color: {COLORS['bg_primary']};
+                    }}
+                """)
+        
+        checkbox.stateChanged.connect(lambda: update_checkbox_style())
+        update_checkbox_style()  # Initial setup
+    
+    def update_results_count_style(self, count: int):
+        """Update results count with proper styling"""
+        if count == 0:
+            color = COLORS['text_secondary']
+        elif count < 50:
+            color = COLORS['success']
+        elif count < 200:
+            color = COLORS['warning'] 
+        else:
+            color = COLORS['error']
+        
+        self.results_count_label.setText(f"Results: {count}")
+        self.results_count_label.setStyleSheet(f"font-weight: bold; color: {color}; font-size: 12px;")
+    
     def on_date_range_changed(self, range_text: str):
         """Handle date range combo change"""
         if range_text != "Custom Range":
@@ -370,9 +484,9 @@ class MainWindow(QMainWindow):
             # Disconnect
             try:
                 self.ftp_manager.disconnect()
-                self.connection_status.setText("Disconnected")
-                self.connection_status.setStyleSheet("color: red;")
+                self.update_connection_status("Disconnected", 'error')
                 self.connect_button.setText("Connect")
+                self.connect_button.setStyleSheet(BUTTON_STYLES['success'])
                 QMessageBox.information(self, "Success", "Disconnected from FTP server")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Disconnect error: {str(e)}")
@@ -392,23 +506,20 @@ class MainWindow(QMainWindow):
             return
         
         self.connect_button.setEnabled(False)
-        self.connection_status.setText("Connecting...")
-        self.connection_status.setStyleSheet("color: blue;")
+        self.update_connection_status("Connecting...", 'info')
         
         try:
             if self.ftp_manager.connect(host, port, username, password):
-                self.connection_status.setText("✓ Connected")
-                self.connection_status.setStyleSheet("color: green;")
+                self.update_connection_status("✓ Connected", 'success')
                 self.connect_button.setText("Disconnect")
+                self.connect_button.setStyleSheet(BUTTON_STYLES['error'])
                 QMessageBox.information(self, "Success", "FTP connection successful!")
             else:
-                self.connection_status.setText("✗ Failed")
-                self.connection_status.setStyleSheet("color: red;")
+                self.update_connection_status("✗ Failed", 'error')
                 QMessageBox.warning(self, "Error", "FTP connection failed!")
                 
         except Exception as e:
-            self.connection_status.setText("✗ Error")
-            self.connection_status.setStyleSheet("color: red;")
+            self.update_connection_status("✗ Error", 'error')
             QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
             
         finally:
@@ -471,7 +582,7 @@ class MainWindow(QMainWindow):
         # Clear previous results
         self.results_table.setRowCount(0)
         self.search_results = []
-        self.update_results_count()
+        self.update_results_display()
         
         # Start search
         self.search_thread.start()
@@ -510,7 +621,7 @@ class MainWindow(QMainWindow):
         """Handle search completion"""
         self.search_results = results
         self.update_results_table()
-        self.update_results_count()
+        self.update_results_display()
         
         # Update UI
         self.search_button.setEnabled(True)
@@ -560,10 +671,10 @@ class MainWindow(QMainWindow):
                 for col in range(6):
                     self.results_table.setItem(row, col, QTableWidgetItem(""))
     
-    def update_results_count(self):
+    def update_results_display(self):
         """Update results count label"""
         count = len(self.search_results)
-        self.results_count_label.setText(f"Results: {count}")
+        self.update_results_count_style(count)
     
     def export_csv(self):
         """Export results to CSV"""
@@ -733,25 +844,22 @@ class MainWindow(QMainWindow):
                 password = ftp_settings['password']
                 
                 # Try to connect automatically
-                self.connection_status.setText("Auto-connecting...")
-                self.connection_status.setStyleSheet("color: blue;")
+                self.update_connection_status("Auto-connecting...", 'info')
                 
                 success = self.ftp_manager.connect(host, port, username, password)
                 
                 if success:
-                    self.connection_status.setText(f"✓ Connected")
-                    self.connection_status.setStyleSheet("color: green;")
+                    self.update_connection_status("✓ Connected", 'success')
                     self.connect_button.setText("Disconnect")
+                    self.connect_button.setStyleSheet(BUTTON_STYLES['error'])
                     # Don't show popup for auto-connect
                 else:
-                    self.connection_status.setText("Auto-connect failed")
-                    self.connection_status.setStyleSheet("color: red;")
+                    self.update_connection_status("Auto-connect failed", 'error')
                     self.connect_button.setText("Connect")
+                    self.connect_button.setStyleSheet(BUTTON_STYLES['success'])
                     
             else:
-                self.connection_status.setText("No saved credentials")
-                self.connection_status.setStyleSheet("color: orange;")
+                self.update_connection_status("No saved credentials", 'warning')
                 
         except Exception as e:
-            self.connection_status.setText(f"Auto-connect error")
-            self.connection_status.setStyleSheet("color: red;")
+            self.update_connection_status("Auto-connect error", 'error')
