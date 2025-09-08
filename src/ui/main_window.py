@@ -4,6 +4,7 @@ Main Window UI for XML Search Application
 
 import sys
 import os
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
 
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
         
         self.init_ui()
         self.setup_connections()
+        self.setup_custom_logging()
         self.load_saved_settings()
         self.auto_connect_if_possible()
         
@@ -103,6 +105,7 @@ class MainWindow(QMainWindow):
         self.create_search_tab()
         self.create_settings_tab()
         self.create_results_tab()
+        self.create_log_tab()
         
         # Status bar
         self.status_bar = QStatusBar()
@@ -387,6 +390,90 @@ class MainWindow(QMainWindow):
         
         # Add to tab
         self.tab_widget.addTab(results_widget, "Results")
+        
+    def create_log_tab(self):
+        """Create log display tab with statistics"""
+        log_widget = QWidget()
+        layout = QVBoxLayout(log_widget)
+        
+        # Statistics panel
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_secondary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                padding: 8px;
+                margin: 4px;
+            }}
+        """)
+        stats_layout = QHBoxLayout(stats_frame)
+        
+        # Statistics labels
+        self.stats_directories = QLabel("📁 Directories: 0")
+        self.stats_xml_files = QLabel("📄 XML Files: 0")
+        self.stats_processed = QLabel("✅ Processed: 0")
+        self.stats_failed = QLabel("❌ Failed: 0")
+        self.stats_connections = QLabel("🔌 Connection Issues: 0")
+        
+        # Style statistics labels
+        stats_style = f"""
+            QLabel {{
+                color: {COLORS['text_primary']};
+                font-weight: 600;
+                font-size: 11px;
+                padding: 4px 8px;
+                background-color: {COLORS['bg_dark']};
+                border-radius: 4px;
+                margin: 2px;
+            }}
+        """
+        
+        for label in [self.stats_directories, self.stats_xml_files, self.stats_processed, 
+                     self.stats_failed, self.stats_connections]:
+            label.setStyleSheet(stats_style)
+            stats_layout.addWidget(label)
+        
+        stats_layout.addStretch()
+        
+        # Clear logs button
+        self.clear_logs_button = QPushButton("Clear Logs")
+        self.clear_logs_button.setStyleSheet(BUTTON_STYLES['secondary'])
+        self.clear_logs_button.setMinimumHeight(28)
+        self.clear_logs_button.clicked.connect(self.clear_logs)
+        stats_layout.addWidget(self.clear_logs_button)
+        
+        layout.addWidget(stats_frame)
+        
+        # Log display
+        self.log_display = QTextEdit()
+        self.log_display.setReadOnly(True)
+        self.log_display.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {COLORS['bg_dark']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
+                padding: 8px;
+                line-height: 1.4;
+            }}
+        """)
+        
+        layout.addWidget(self.log_display)
+        
+        # Initialize statistics
+        self.log_stats = {
+            'directories': 0,
+            'xml_files': 0,
+            'processed': 0,
+            'failed': 0,
+            'connection_issues': 0
+        }
+        
+        # Add to tab
+        self.tab_widget.addTab(log_widget, "Logs")
         
     def setup_connections(self):
         """Setup signal-slot connections"""
@@ -891,3 +978,139 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             print(f"Error setting icon: {e}")
+    
+    def setup_custom_logging(self):
+        """Setup custom logging to capture and display logs in UI"""
+        class UILogHandler(logging.Handler):
+            def __init__(self, main_window):
+                super().__init__()
+                self.main_window = main_window
+                
+            def emit(self, record):
+                try:
+                    # Format the log message
+                    msg = self.format(record)
+                    level = record.levelname
+                    
+                    # Send to main window for display
+                    self.main_window.add_log_message(msg, level)
+                    
+                    # Update statistics based on log content
+                    self.main_window.update_log_statistics(msg, level)
+                    
+                except Exception:
+                    pass  # Prevent logging errors from breaking the app
+        
+        # Create and configure handler
+        self.ui_log_handler = UILogHandler(self)
+        self.ui_log_handler.setLevel(logging.INFO)
+        
+        # Format: timestamp - level - message
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', 
+                                    datefmt='%H:%M:%S')
+        self.ui_log_handler.setFormatter(formatter)
+        
+        # Add handler to root logger to catch all logs
+        root_logger = logging.getLogger()
+        root_logger.addHandler(self.ui_log_handler)
+        
+        # Also add to specific loggers we care about
+        for logger_name in ['src.core.ftp_manager', 'src.core.search_worker', 
+                           'src.core.search_engine']:
+            logger = logging.getLogger(logger_name)
+            logger.setLevel(logging.INFO)
+    
+    def add_log_message(self, message: str, level: str):
+        """Add a log message to the log display with color coding"""
+        if not hasattr(self, 'log_display'):
+            return
+            
+        # Color coding based on log level
+        color_map = {
+            'INFO': COLORS['text_primary'],
+            'WARNING': COLORS['warning'],
+            'ERROR': COLORS['error'],
+            'DEBUG': COLORS['text_secondary'],
+            'CRITICAL': COLORS['error']
+        }
+        
+        color = color_map.get(level, COLORS['text_primary'])
+        
+        # Format message with HTML for coloring
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        formatted_msg = f'<span style="color: {color};">[{level}] {message}</span>'
+        
+        # Add to log display (use QTextEdit's HTML capabilities)
+        self.log_display.append(formatted_msg)
+        
+        # Auto-scroll to bottom
+        cursor = self.log_display.textCursor()
+        cursor.movePosition(cursor.End)
+        self.log_display.setTextCursor(cursor)
+    
+    def update_log_statistics(self, message: str, level: str):
+        """Update log statistics based on message content"""
+        msg_lower = message.lower()
+        
+        # Track different types of events
+        if 'found' in msg_lower and 'directories' in msg_lower:
+            try:
+                # Extract number from messages like "Found 5 directories"
+                import re
+                match = re.search(r'found (\d+)', msg_lower)
+                if match:
+                    self.log_stats['directories'] = int(match.group(1))
+            except:
+                pass
+                
+        elif 'found' in msg_lower and 'xml files' in msg_lower:
+            try:
+                # Extract number from messages like "Found 150 XML files"
+                import re
+                match = re.search(r'found (\d+)', msg_lower)
+                if match:
+                    self.log_stats['xml_files'] += int(match.group(1))
+            except:
+                pass
+                
+        elif 'search completed' in msg_lower and 'result: found' in msg_lower:
+            self.log_stats['processed'] += 1
+            
+        elif level == 'ERROR' and any(keyword in msg_lower for keyword in 
+                                     ['connection', '10060', 'timeout', 'host']):
+            self.log_stats['connection_issues'] += 1
+            self.log_stats['failed'] += 1
+            
+        elif level == 'ERROR':
+            self.log_stats['failed'] += 1
+        
+        # Update statistics display
+        self.update_statistics_display()
+    
+    def update_statistics_display(self):
+        """Update the statistics labels"""
+        if hasattr(self, 'stats_directories'):
+            self.stats_directories.setText(f"📁 Directories: {self.log_stats['directories']}")
+            self.stats_xml_files.setText(f"📄 XML Files: {self.log_stats['xml_files']}")
+            self.stats_processed.setText(f"✅ Processed: {self.log_stats['processed']}")
+            self.stats_failed.setText(f"❌ Failed: {self.log_stats['failed']}")
+            self.stats_connections.setText(f"🔌 Connection Issues: {self.log_stats['connection_issues']}")
+    
+    def clear_logs(self):
+        """Clear log display and reset statistics"""
+        if hasattr(self, 'log_display'):
+            self.log_display.clear()
+        
+        # Reset statistics
+        self.log_stats = {
+            'directories': 0,
+            'xml_files': 0,
+            'processed': 0,
+            'failed': 0,
+            'connection_issues': 0
+        }
+        
+        self.update_statistics_display()
+        
+        # Add initial log message
+        self.add_log_message("Logs cleared", "INFO")
