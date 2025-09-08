@@ -78,31 +78,45 @@ class TextSearchEngine:
             def chunk_callback(data):
                 nonlocal buffer, line_number, found_result
                 
+                logger.debug(f"Received chunk: {len(data)} bytes")
+                
                 # Skip processing if we already found result and want early termination
                 if found_result and early_termination:
+                    logger.debug("Early termination - skipping chunk processing")
                     return
                     
                 buffer += data
+                logger.debug(f"Buffer size after adding chunk: {len(buffer)} bytes")
                 
                 # Process complete chunks (but only if we haven't found result or not using early termination)
+                chunk_count = 0
                 while len(buffer) >= chunk_size and (not found_result or not early_termination):
+                    chunk_count += 1
+                    logger.debug(f"Processing chunk #{chunk_count}, buffer size: {len(buffer)}")
+                    
                     chunk = buffer[:chunk_size]
                     buffer = buffer[chunk_size - CHUNK_OVERLAP_SIZE:]
                     
                     # Search in chunk
                     result = self._search_in_chunk(chunk, date_dir, filename, line_number)
                     if result:
+                        logger.debug(f"Found match in chunk #{chunk_count}")
                         if not found_result:  # Take first result found
                             found_result = result
                             if early_termination:
                                 # Don't process more chunks, but can't stop stream here
+                                logger.debug("Early termination triggered - breaking chunk loop")
                                 break
                     
                     # Update line number
                     line_number += chunk.count(b'\n')
+                
+                logger.debug(f"Finished processing chunks. Processed {chunk_count} chunks, buffer remaining: {len(buffer)} bytes")
             
+            logger.debug(f"Starting stream processing for {filename}")
             # Process stream
             stream_func(chunk_callback)
+            logger.debug(f"Stream processing completed for {filename}")
             
             # If we found a result during streaming, return it
             if found_result:

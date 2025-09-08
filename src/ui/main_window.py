@@ -74,6 +74,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.setup_connections()
         self.load_saved_settings()
+        self.auto_connect_if_possible()
         
     def init_ui(self):
         """Initialize user interface"""
@@ -234,11 +235,12 @@ class MainWindow(QMainWindow):
         self.remember_password = QCheckBox("Remember Password")
         ftp_layout.addWidget(self.remember_password, 2, 0, 1, 2)
         
-        # Test connection button
-        self.test_connection_button = QPushButton("Test Connection")
-        ftp_layout.addWidget(self.test_connection_button, 3, 0, 1, 2)
+        # Connection button (Connect/Disconnect)  
+        self.connect_button = QPushButton("Connect")
+        ftp_layout.addWidget(self.connect_button, 3, 0, 1, 2)
         
         self.connection_status = QLabel("Not connected")
+        self.connection_status.setStyleSheet("color: red;")
         ftp_layout.addWidget(self.connection_status, 3, 2, 1, 2)
         
         layout.addWidget(ftp_group)
@@ -339,7 +341,7 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_search)
         
         # FTP settings
-        self.test_connection_button.clicked.connect(self.test_ftp_connection)
+        self.connect_button.clicked.connect(self.toggle_connection)
         
         # Settings controls
         self.save_settings_button.clicked.connect(self.save_settings)
@@ -362,8 +364,24 @@ class MainWindow(QMainWindow):
             except:
                 pass
     
-    def test_ftp_connection(self):
-        """Test FTP connection"""
+    def toggle_connection(self):
+        """Toggle FTP connection (Connect/Disconnect)"""
+        if self.ftp_manager.is_connected:
+            # Disconnect
+            try:
+                self.ftp_manager.disconnect()
+                self.connection_status.setText("Disconnected")
+                self.connection_status.setStyleSheet("color: red;")
+                self.connect_button.setText("Connect")
+                QMessageBox.information(self, "Success", "Disconnected from FTP server")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Disconnect error: {str(e)}")
+        else:
+            # Connect
+            self.connect_to_ftp()
+    
+    def connect_to_ftp(self):
+        """Connect to FTP server"""
         host = self.ftp_host.text().strip()
         port = self.ftp_port.value()
         username = self.ftp_username.text().strip()
@@ -373,14 +391,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please fill in all FTP connection fields")
             return
         
-        self.test_connection_button.setEnabled(False)
-        self.connection_status.setText("Testing...")
+        self.connect_button.setEnabled(False)
+        self.connection_status.setText("Connecting...")
+        self.connection_status.setStyleSheet("color: blue;")
         
-        # Test connection
         try:
             if self.ftp_manager.connect(host, port, username, password):
                 self.connection_status.setText("✓ Connected")
                 self.connection_status.setStyleSheet("color: green;")
+                self.connect_button.setText("Disconnect")
                 QMessageBox.information(self, "Success", "FTP connection successful!")
             else:
                 self.connection_status.setText("✗ Failed")
@@ -393,7 +412,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Connection error: {str(e)}")
             
         finally:
-            self.test_connection_button.setEnabled(True)
+            self.connect_button.setEnabled(True)
     
     def start_search(self):
         """Start search operation"""
@@ -696,3 +715,43 @@ class MainWindow(QMainWindow):
             self.settings = self.settings_manager.default_settings.copy()
             self.load_saved_settings()
             QMessageBox.information(self, "Success", "Settings reset to defaults!")
+    
+    def auto_connect_if_possible(self):
+        """Auto-connect to FTP if credentials are available"""
+        try:
+            ftp_settings = self.settings.get('ftp', {})
+            
+            # Check if we have complete FTP settings
+            if (ftp_settings.get('host') and 
+                ftp_settings.get('username') and 
+                ftp_settings.get('password') and 
+                ftp_settings.get('remember_password', False)):
+                
+                host = ftp_settings['host']
+                port = ftp_settings.get('port', 21)
+                username = ftp_settings['username']
+                password = ftp_settings['password']
+                
+                # Try to connect automatically
+                self.connection_status.setText("Auto-connecting...")
+                self.connection_status.setStyleSheet("color: blue;")
+                
+                success = self.ftp_manager.connect(host, port, username, password)
+                
+                if success:
+                    self.connection_status.setText(f"✓ Connected")
+                    self.connection_status.setStyleSheet("color: green;")
+                    self.connect_button.setText("Disconnect")
+                    # Don't show popup for auto-connect
+                else:
+                    self.connection_status.setText("Auto-connect failed")
+                    self.connection_status.setStyleSheet("color: red;")
+                    self.connect_button.setText("Connect")
+                    
+            else:
+                self.connection_status.setText("No saved credentials")
+                self.connection_status.setStyleSheet("color: orange;")
+                
+        except Exception as e:
+            self.connection_status.setText(f"Auto-connect error")
+            self.connection_status.setStyleSheet("color: red;")

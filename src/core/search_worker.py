@@ -164,7 +164,9 @@ class SearchWorker:
             # Create search engine
             search_engine = self._create_search_engine(keywords, search_mode, case_sensitive)
             
-            # Execute search with thread pool
+            # Execute search with thread pool (restored multi-threading)
+            logger.info(f"Starting multi-threaded search with {max_threads} threads...")
+            
             with ThreadPoolExecutor(max_workers=max_threads) as executor:
                 # Submit all tasks
                 future_to_task = {
@@ -175,6 +177,7 @@ class SearchWorker:
                 # Process completed tasks
                 for future in as_completed(future_to_task):
                     if self.stop_event.is_set():
+                        logger.info("Search stopped by user")
                         break
                         
                     task = future_to_task[future]
@@ -186,9 +189,9 @@ class SearchWorker:
                             with self.results_lock:
                                 self.results.append(result)
                             self.progress.add_match()
-                            logger.debug(f"Match found in {filename}: {result.match_type}")
+                            logger.info(f"✓ Match found in {filename}: {result.match_type}")
                         else:
-                            logger.debug(f"No match in {filename}")
+                            logger.debug(f"✗ No match in {filename}")
                         
                         self.progress.update_file(filename)
                         
@@ -202,6 +205,15 @@ class SearchWorker:
                         self.progress.add_error(error_msg)
             
             logger.info(f"Search completed. Found {len(self.results)} matches.")
+            
+            # Close only connection pool, keep main connection alive
+            try:
+                if hasattr(self.ftp_manager, 'pool') and self.ftp_manager.pool:
+                    self.ftp_manager.pool.close_all()
+                    logger.info("FTP connection pool closed")
+            except Exception as e:
+                logger.error(f"Error closing FTP connection pool: {e}")
+            
             return self.results
             
         except Exception as e:
@@ -223,33 +235,55 @@ class SearchWorker:
             )
     
     def _search_file(self, task, search_engine) -> Optional[SearchResult]:
-        """Search a single file"""
+        """Search a single file with proper connection management"""
         date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches = task
         
         if self.stop_event.is_set():
+            logger.info(f"⏹ Stopping search for {filename} (stop requested)")
             return None
             
+        conn = None
         try:
+            logger.info(f"🔌 Getting FTP connection for {filename}...")
+            
             # Get file stream
             conn, stream_func = self.ftp_manager.get_file_stream(
                 date_dir, filename, source_directory, send_file_directory
             )
             if not conn or not stream_func:
+                logger.warning(f"❌ Could not get stream for {filename}")
                 return None
 
-            try:
-                # Search in stream with early termination control
-                early_termination = not find_all_matches  # Invert: if find_all_matches=True, early_termination=False
-                result = search_engine.search_in_stream(stream_func, date_dir, filename, early_termination)
-                return result
-                
-            finally:
-                # Always release connection
-                self.ftp_manager.release_file_stream(conn)
+            logger.info(f"🔍 Starting search in {filename}...")
+            
+            # Search in stream with early termination control and smaller chunk size
+            early_termination = not find_all_matches  # Invert: if find_all_matches=True, early_termination=False
+            
+            # Use smaller chunk size for large files to avoid hanging
+            chunk_size = 64 * 1024 if file_size > 100 * 1024 else 256 * 1024  # 64KB for large files, 256KB for small
+            
+            logger.info(f"Using chunk size: {chunk_size} bytes for file size: {file_size} bytes")
+            
+            result = search_engine.search_in_stream(
+                stream_func, date_dir, filename, chunk_size, early_termination
+            )
+            
+            logger.info(f"✅ Search completed for {filename}, result: {'Found' if result else 'Not found'}")
+            return result
                 
         except Exception as e:
-            logger.error(f"Error searching file {filename}: {e}")
+            logger.error(f"💥 Error searching file {filename}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
+        finally:
+            # Always release connection
+            if conn:
+                try:
+                    self.ftp_manager.release_file_stream(conn)
+                    logger.info(f"🔌 Released connection for {filename}")
+                except Exception as e:
+                    logger.error(f"💥 Error releasing connection for {filename}: {e}")
 
     def stop(self):
         """Stop the search operation"""

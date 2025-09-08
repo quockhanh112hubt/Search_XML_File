@@ -288,6 +288,15 @@ class FTPManager:
             path = f"/{source_dir}/{date_dir}/{send_file_dir}"
             conn.ftp.cwd(path)
             
+            # Test if file exists first
+            try:
+                file_size = conn.ftp.size(filename)
+                logger.debug(f"File {filename} exists, size: {file_size}")
+            except Exception as e:
+                logger.error(f"File {filename} does not exist or cannot be accessed: {e}")
+                self.pool.return_connection(conn)
+                return None, None
+            
             # Return connection and callback for streaming
             return conn, lambda callback: conn.ftp.retrbinary(f'RETR {filename}', callback)
             
@@ -300,3 +309,22 @@ class FTPManager:
         """Release file stream connection"""
         if conn:
             self.pool.return_connection(conn)
+    
+    def close_all_connections(self):
+        """Close all connections in the pool"""
+        if hasattr(self, 'pool') and self.pool:
+            try:
+                self.pool.close_all()
+                logger.info("All FTP pool connections closed")
+            except Exception as e:
+                logger.error(f"Error closing FTP pool: {e}")
+                
+        # Also close main connection
+        if hasattr(self, 'ftp') and self.ftp:
+            try:
+                self.ftp.quit()
+                logger.info("Main FTP connection closed")
+            except Exception as e:
+                logger.error(f"Error closing main FTP connection: {e}")
+        
+        self.is_connected = False
