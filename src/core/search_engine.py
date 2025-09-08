@@ -147,7 +147,15 @@ class TextSearchEngine:
                 return self._search_in_chunk(buffer, date_dir, filename, line_number)
                 
         except Exception as e:
-            logger.error(f"Error searching in {filename}: {e}")
+            # Re-raise connection-related errors so retry logic can handle them
+            if (isinstance(e, (ConnectionError, OSError, TimeoutError)) or 
+                "10060" in str(e) or "timeout" in str(e).lower() or 
+                "connection" in str(e).lower() or "host" in str(e).lower()):
+                logger.debug(f"Re-raising connection error for retry handling: {e}")
+                raise e
+            else:
+                # Log and handle other errors locally
+                logger.error(f"Error searching in {filename}: {e}")
             
         return None
     
@@ -254,8 +262,16 @@ class XPathSearchEngine:
                 logger.error(f"XML parse error in {filename}: {e}")
                 
         except Exception as e:
-            logger.error(f"Error in XPath search for {filename}: {e}")
-            
+            # Re-raise connection-related errors so retry logic can handle them
+            if (isinstance(e, (ConnectionError, OSError, TimeoutError)) or 
+                "10060" in str(e) or "timeout" in str(e).lower() or 
+                "connection" in str(e).lower() or "host" in str(e).lower()):
+                logger.debug(f"XPath search - Re-raising connection error for retry handling: {e}")
+                raise e
+            else:
+                # Log and handle other errors locally
+                logger.error(f"Error in XPath search for {filename}: {e}")
+        
         return None
     
     def _evaluate_xpath(self, element, xpath_expr: str) -> bool:
