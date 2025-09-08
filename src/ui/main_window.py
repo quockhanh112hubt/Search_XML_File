@@ -82,6 +82,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("🔍 XML Search Tool - Professional Dark Edition")
         self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         
+        # Set window icon
+        self.set_window_icon()
+        
         # Apply modern dark stylesheet
         self.setStyleSheet(COMPLETE_STYLESHEET)
         
@@ -863,3 +866,28 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             self.update_connection_status("Auto-connect error", 'error')
+
+    def set_window_icon(self):
+        """Set window icon from Resource folder"""
+        try:
+            # Get the directory containing the script
+            if getattr(sys, 'frozen', False):
+                # Running as compiled exe
+                base_dir = os.path.dirname(sys.executable)
+            else:
+                # Running as script
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            
+            icon_path = os.path.join(base_dir, "Resource", "icon.ico")
+            
+            if os.path.exists(icon_path):
+                icon = QIcon(icon_path)
+                self.setWindowIcon(icon)
+                # Also set for the application (taskbar)
+                if hasattr(self, 'app'):
+                    self.app.setWindowIcon(icon)
+            else:
+                print(f"Icon not found at: {icon_path}")
+                
+        except Exception as e:
+            print(f"Error setting icon: {e}")

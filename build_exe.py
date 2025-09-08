@@ -27,6 +27,7 @@ cmd = [
     "--clean",                      # Clean before build
     "--add-data=src;src",           # Include src folder
     "--add-data=config;config",     # Include config folder
+    "--add-data=Resource;Resource", # Include Resource folder with icon
     "--hidden-import=PyQt5.QtCore",
     "--hidden-import=PyQt5.QtGui", 
     "--hidden-import=PyQt5.QtWidgets",

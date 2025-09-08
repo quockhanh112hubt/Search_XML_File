@@ -192,11 +192,17 @@ class FTPManager:
             
         try:
             # Navigate to source directory
+            logger.info(f"Navigating to source directory: /{source_dir}")
             conn.ftp.cwd(f"/{source_dir}")
             
             # Get all directories
             dirs = []
             conn.ftp.retrlines('LIST', dirs.append)
+            logger.info(f"Found {len(dirs)} items in {source_dir}")
+            
+            # Log first few items for debugging
+            for i, line in enumerate(dirs[:5]):
+                logger.info(f"Item {i+1}: {line}")
             
             # Filter date directories
             date_dirs = []
@@ -204,14 +210,17 @@ class FTPManager:
                 parts = line.split()
                 if len(parts) >= 9 and parts[0].startswith('d'):
                     dirname = parts[-1]
+                    logger.debug(f"Checking directory: {dirname}")
                     if len(dirname) == 8 and dirname.isdigit():
                         try:
                             dir_date = datetime.strptime(dirname, "%Y%m%d")
                             if start_dt <= dir_date <= end_dt:
                                 date_dirs.append(dirname)
+                                logger.info(f"Added date directory: {dirname}")
                         except ValueError:
                             continue
                             
+            logger.info(f"Found {len(date_dirs)} date directories: {date_dirs}")
             return sorted(date_dirs)
             
         except Exception as e:
