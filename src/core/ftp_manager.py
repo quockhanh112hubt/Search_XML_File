@@ -38,6 +38,20 @@ class FTPConnection:
             self.ftp.connect(self.host, self.port, timeout=FTP_TIMEOUT)
             self.ftp.login(self.username, self.password)
             self.ftp.set_pasv(True)  # Use passive mode
+            
+            # Navigate to root directory to ensure we start from the correct location
+            try:
+                self.ftp.cwd('/')
+                logger.info("Navigated to root directory")
+            except Exception as e:
+                logger.warning(f"Could not navigate to root directory: {e}")
+                # Try to get current directory for debugging
+                try:
+                    current_dir = self.ftp.pwd()
+                    logger.info(f"Current directory after login: {current_dir}")
+                except:
+                    pass
+            
             self.is_connected = True
             self.last_used = time.time()
             logger.info(f"FTP connected to {self.host}:{self.port}")
@@ -206,21 +220,26 @@ class FTPManager:
             
             # Filter date directories
             date_dirs = []
+            logger.info(f"Filtering directories for date range: {start_dt.date()} to {end_dt.date()}")
+            
             for line in dirs:
                 parts = line.split()
                 if len(parts) >= 9 and parts[0].startswith('d'):
                     dirname = parts[-1]
-                    logger.debug(f"Checking directory: {dirname}")
                     if len(dirname) == 8 and dirname.isdigit():
                         try:
                             dir_date = datetime.strptime(dirname, "%Y%m%d")
+                            logger.debug(f"Checking {dirname} -> {dir_date.date()} (in range: {start_dt <= dir_date <= end_dt})")
                             if start_dt <= dir_date <= end_dt:
                                 date_dirs.append(dirname)
-                                logger.info(f"Added date directory: {dirname}")
-                        except ValueError:
+                                logger.info(f"✓ Added date directory: {dirname}")
+                            else:
+                                logger.debug(f"✗ {dirname} outside range")
+                        except ValueError as e:
+                            logger.debug(f"✗ Invalid date format {dirname}: {e}")
                             continue
                             
-            logger.info(f"Found {len(date_dirs)} date directories: {date_dirs}")
+            logger.info(f"Found {len(date_dirs)} date directories in range: {date_dirs}")
             return sorted(date_dirs)
             
         except Exception as e:
