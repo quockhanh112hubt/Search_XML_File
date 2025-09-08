@@ -177,6 +177,31 @@ class FTPManager:
             self.pool.close_all()
         self.is_connected = False
         
+    def reconnect(self):
+        """Reconnect to FTP server (refresh connection pool)"""
+        if not self.pool:
+            logger.warning("No pool to reconnect - connection was never established")
+            return False
+            
+        try:
+            # Store connection details
+            host = self.pool.host
+            port = self.pool.port
+            username = self.pool.username
+            password = self.pool.password
+            
+            logger.info("Reconnecting to FTP server...")
+            
+            # Close existing connections
+            self.disconnect()
+            
+            # Re-establish connection
+            return self.connect(host, port, username, password)
+            
+        except Exception as e:
+            logger.error(f"FTP reconnection failed: {e}")
+            return False
+        
     def list_date_directories(self, start_date, end_date, source_directory: str = None) -> List[str]:
         """List directories within date range"""
         if not self.is_connected:
@@ -218,26 +243,80 @@ class FTPManager:
             for i, line in enumerate(dirs[:5]):
                 logger.info(f"Item {i+1}: {line}")
             
+            logger.info("Starting date directory filtering...")
+            
             # Filter date directories
             date_dirs = []
             logger.info(f"Filtering directories for date range: {start_dt.date()} to {end_dt.date()}")
+            logger.info(f"Start datetime: {start_dt}, End datetime: {end_dt}")
             
             for line in dirs:
                 parts = line.split()
-                if len(parts) >= 9 and parts[0].startswith('d'):
-                    dirname = parts[-1]
-                    if len(dirname) == 8 and dirname.isdigit():
+                logger.info(f"Processing line: {line}")
+                
+                # Flexible parsing - handle different FTP server formats
+                if len(parts) >= 1:
+                    logger.info(f"Line has {len(parts)} parts: {parts}")
+                    
+                    # Handle different FTP LIST formats
+                    is_directory = False
+                    dirname = None
+                    
+                    # Unix format: drwxrwxrwx ... dirname
+                    if parts[0].startswith('d'):
+                        is_directory = True
+                        dirname = parts[-1]
+                        logger.info(f"Unix format detected - directory: {dirname}")
+                    
+                    # Windows format: MM-DD-YY HH:MMAM/PM <DIR> dirname  
+                    elif len(parts) >= 3 and '<DIR>' in parts:
+                        is_directory = True
+                        # Find <DIR> index and get next part as directory name
                         try:
-                            dir_date = datetime.strptime(dirname, "%Y%m%d")
-                            logger.debug(f"Checking {dirname} -> {dir_date.date()} (in range: {start_dt <= dir_date <= end_dt})")
-                            if start_dt <= dir_date <= end_dt:
-                                date_dirs.append(dirname)
-                                logger.info(f"✓ Added date directory: {dirname}")
+                            dir_index = parts.index('<DIR>')
+                            if dir_index + 1 < len(parts):
+                                dirname = parts[dir_index + 1]
+                                logger.info(f"Windows format detected - directory: {dirname}")
                             else:
-                                logger.debug(f"✗ {dirname} outside range")
-                        except ValueError as e:
-                            logger.debug(f"✗ Invalid date format {dirname}: {e}")
-                            continue
+                                logger.info("Windows format but no directory name after <DIR>")
+                        except ValueError:
+                            logger.info("Windows format detection failed")
+                    
+                    # DOS/other format: check if any part contains <DIR>
+                    elif any('<DIR>' in part for part in parts):
+                        is_directory = True
+                        dirname = parts[-1]  # Last part as fallback
+                        logger.info(f"DOS/other format detected - directory: {dirname}")
+                    
+                    else:
+                        logger.info(f"✗ Not a directory (no 'd' prefix or <DIR> marker)")
+                        continue
+                        
+                    if is_directory and dirname:
+                        logger.info(f"Found directory candidate: {dirname}")
+                        
+                        # Check if it's a valid date directory (YYYYMMDD format)
+                        if len(dirname) == 8 and dirname.isdigit():
+                            logger.info(f"Directory {dirname} matches date format")
+                            try:
+                                dir_date = datetime.strptime(dirname, "%Y%m%d")
+                                logger.info(f"Checking {dirname} -> {dir_date} vs range {start_dt} to {end_dt}")
+                                logger.info(f"Comparison: {start_dt} <= {dir_date} <= {end_dt} = {start_dt <= dir_date <= end_dt}")
+                                
+                                if start_dt <= dir_date <= end_dt:
+                                    date_dirs.append(dirname)
+                                    logger.info(f"✓ Added date directory: {dirname}")
+                                else:
+                                    logger.info(f"✗ {dirname} outside range: {dir_date} not between {start_dt} and {end_dt}")
+                            except ValueError as e:
+                                logger.info(f"✗ Invalid date format {dirname}: {e}")
+                                continue
+                        else:
+                            logger.info(f"✗ {dirname} - not valid date format (length: {len(dirname)}, isdigit: {dirname.isdigit()})")
+                    else:
+                        logger.info(f"✗ Directory detection failed")
+                else:
+                    logger.info(f"✗ Empty line or no parts")
                             
             logger.info(f"Found {len(date_dirs)} date directories in range: {date_dirs}")
             return sorted(date_dirs)
@@ -253,7 +332,7 @@ class FTPManager:
         """List XML files in Send File directory for specific date"""
         if not self.is_connected:
             return []
-        
+
         # Use provided directories or defaults
         source_dir = source_directory or SOURCE_DIRECTORY
         send_file_dir = send_file_directory or SEND_FILE_DIRECTORY
@@ -263,33 +342,106 @@ class FTPManager:
             return []
             
         try:
-            # Navigate to Send File directory
-            path = f"/{source_dir}/{date_dir}/{send_file_dir}"
-            conn.ftp.cwd(path)
+            # First, let's check what's directly in the date directory
+            logger.info(f"=== Exploring directory structure for {date_dir} ===")
             
-            # Get file list with sizes
-            files = []
-            file_list = []
-            conn.ftp.retrlines('LIST', file_list.append)
+            # Try different possible paths
+            paths_to_try = [
+                f"/{date_dir}",  # Direct date directory
+                f"/{source_dir}/{date_dir}",  # Default source + date
+                f"/{source_dir}/{date_dir}/{send_file_dir}",  # Full default path
+                f"/SAMSUNG/{date_dir}",  # From log we saw SAMSUNG
+                f"/SAMSUNG/{date_dir}/Send File",  # SAMSUNG + date + Send File
+            ]
             
-            for line in file_list:
-                parts = line.split()
-                if len(parts) >= 9 and not parts[0].startswith('d'):
-                    filename = parts[-1]
-                    if filename.lower().endswith('.xml'):
-                        # Apply file pattern filter if provided
-                        if file_pattern:
-                            import fnmatch
-                            if not fnmatch.fnmatch(filename, file_pattern):
-                                continue
+            files_found = []
+            successful_path = None
+            
+            for path in paths_to_try:
+                try:
+                    logger.info(f"Trying path: {path}")
+                    conn.ftp.cwd(path)
+                    
+                    # Get file list
+                    file_list = []
+                    conn.ftp.retrlines('LIST', file_list.append)
+                    logger.info(f"Found {len(file_list)} items in {path}")
+                    
+                    for i, line in enumerate(file_list):
+                        logger.info(f"  Item {i+1}: {line}")
+                    
+                    # Parse files and directories
+                    for line in file_list:
+                        parts = line.split()
+                        logger.info(f"Processing line: {line}")
+                        logger.info(f"Line parts ({len(parts)}): {parts}")
                         
-                        try:
-                            size = int(parts[4])
-                            files.append((filename, size))
-                        except (ValueError, IndexError):
-                            files.append((filename, 0))
+                        if len(parts) >= 1:
+                            # Handle different FTP formats for files
+                            is_file = False
+                            filename = None
+                            
+                            # Unix format: -rwxrwxrwx ... filename
+                            if parts[0].startswith('-'):
+                                is_file = True
+                                filename = parts[-1]
+                                logger.info(f"Unix format file detected: {filename}")
+                            
+                            # Windows format: MM-DD-YY HH:MMAM/PM size filename
+                            elif len(parts) >= 3 and '<DIR>' not in parts:
+                                # If no <DIR> marker, assume it's a file
+                                is_file = True
+                                filename = parts[-1]
+                                logger.info(f"Windows format file detected: {filename}")
+                            
+                            # Check for XML extension
+                            if is_file and filename and filename.lower().endswith('.xml'):
+                                # Apply file pattern filter if provided
+                                if file_pattern:
+                                    import fnmatch
+                                    if not fnmatch.fnmatch(filename, file_pattern):
+                                        logger.info(f"File {filename} doesn't match pattern {file_pattern}")
+                                        continue
+                                
+                                try:
+                                    # Try to get file size from different positions
+                                    size = 0
+                                    if len(parts) >= 5:
+                                        # Try common size positions
+                                        for size_pos in [4, 2, 3]:
+                                            try:
+                                                size = int(parts[size_pos])
+                                                break
+                                            except (ValueError, IndexError):
+                                                continue
+                                    
+                                    files_found.append((filename, size))
+                                    logger.info(f"✓ Found XML file: {filename} (size: {size})")
+                                except Exception as e:
+                                    files_found.append((filename, 0))
+                                    logger.info(f"✓ Found XML file: {filename} (size unknown: {e})")
+                            elif is_file and filename:
+                                logger.info(f"✗ Not XML file: {filename}")
+                            else:
+                                logger.info(f"✗ Not a file or no filename detected")
+                    
+                    if files_found:
+                        successful_path = path
+                        logger.info(f"SUCCESS: Found {len(files_found)} XML files in {path}")
+                        break
+                    else:
+                        logger.info(f"No XML files found in {path}")
+                        
+                except Exception as e:
+                    logger.info(f"Failed to access {path}: {e}")
+                    continue
             
-            return files
+            if successful_path:
+                logger.info(f"Final result: {len(files_found)} XML files from {successful_path}")
+                return files_found
+            else:
+                logger.info("No XML files found in any attempted path")
+                return []
             
         except Exception as e:
             logger.error(f"Error listing files in {date_dir}: {e}")

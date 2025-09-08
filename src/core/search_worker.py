@@ -236,49 +236,120 @@ class SearchWorker:
             )
     
     def _search_file(self, task, search_engine) -> Optional[SearchResult]:
-        """Search a single file with proper connection management (thread-safe)"""
+        """Search a single file with proper connection management (thread-safe) and retry logic"""
         date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches = task
         
         if self.stop_event.is_set():
             logger.debug(f"⏹ Stopping search for {filename} (stop requested)")
             return None
-            
-        conn = None
-        try:
-            logger.debug(f"🔌 [T{threading.current_thread().ident % 10000}] Getting FTP connection for {filename}...")
-            
-            # Get file stream from connection pool
-            conn, stream_func = self.ftp_manager.get_file_stream(
-                date_dir, filename, source_directory, send_file_directory
-            )
-            if not conn or not stream_func:
-                logger.warning(f"❌ Could not get stream for {filename}")
-                return None
-
-            logger.debug(f"🔍 [T{threading.current_thread().ident % 10000}] Starting search in {filename}...")
-            
-            # Search in stream with early termination control and smaller chunk size for large files
-            early_termination = not find_all_matches
-            chunk_size = 64 * 1024 if file_size > 100 * 1024 else 256 * 1024
-            
-            result = search_engine.search_in_stream(
-                stream_func, date_dir, filename, chunk_size, early_termination
-            )
-            
-            logger.debug(f"✅ [T{threading.current_thread().ident % 10000}] Search completed for {filename}, result: {'Found' if result else 'Not found'}")
-            return result
+        
+        max_retries = 3
+        retry_delay = [1, 2, 3]  # Exponential backoff delays
+        
+        for attempt in range(max_retries):
+            conn = None
+            try:
+                logger.debug(f"� [T{threading.current_thread().ident % 10000}] Attempt {attempt + 1}/{max_retries} - Searching {filename} (size: {file_size} bytes)...")
                 
-        except Exception as e:
-            logger.error(f"💥 [T{threading.current_thread().ident % 10000}] Error searching file {filename}: {e}")
-            return None
-        finally:
-            # Always release connection back to pool
-            if conn:
-                try:
-                    self.ftp_manager.release_file_stream(conn)
-                    logger.debug(f"🔌 [T{threading.current_thread().ident % 10000}] Released connection for {filename}")
-                except Exception as e:
-                    logger.error(f"💥 Error releasing connection for {filename}: {e}")
+                # Get file stream from connection pool
+                conn, stream_func = self.ftp_manager.get_file_stream(
+                    date_dir, filename, source_directory, send_file_directory
+                )
+                if not conn or not stream_func:
+                    logger.warning(f"❌ Attempt {attempt + 1} - Could not get stream for {filename}")
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(retry_delay[attempt])
+                        # Force FTP manager to refresh connections
+                        try:
+                            self.ftp_manager.reconnect()
+                        except:
+                            pass
+                        continue
+                    return None
+
+                logger.debug(f"🔍 [T{threading.current_thread().ident % 10000}] Starting search in {filename}...")
+                
+                # Search in stream with early termination control and smaller chunk size for large files
+                early_termination = not find_all_matches
+                chunk_size = 64 * 1024 if file_size > 100 * 1024 else 256 * 1024
+                
+                result = search_engine.search_in_stream(
+                    stream_func, date_dir, filename, chunk_size, early_termination
+                )
+                
+                logger.debug(f"✅ [T{threading.current_thread().ident % 10000}] Search completed for {filename}, result: {'Found' if result else 'Not found'}")
+                
+                # Success - release connection and return result
+                if conn:
+                    try:
+                        self.ftp_manager.release_file_stream(conn)
+                        logger.debug(f"🔌 [T{threading.current_thread().ident % 10000}] Released connection for {filename}")
+                    except Exception as e:
+                        logger.error(f"💥 Error releasing connection for {filename}: {e}")
+                
+                return result
+                    
+            except (ConnectionError, OSError, TimeoutError, ConnectionResetError) as conn_error:
+                # Network/connection specific errors - retry
+                logger.warning(f"🔄 [T{threading.current_thread().ident % 10000}] Connection error on attempt {attempt + 1} for {filename}: {conn_error}")
+                
+                # Release problematic connection
+                if conn:
+                    try:
+                        self.ftp_manager.release_file_stream(conn)
+                    except:
+                        pass
+                
+                if attempt < max_retries - 1:
+                    import time
+                    logger.info(f"⏳ Retrying {filename} in {retry_delay[attempt]} seconds...")
+                    time.sleep(retry_delay[attempt])
+                    # Force reconnection for next attempt
+                    try:
+                        self.ftp_manager.reconnect()
+                    except:
+                        pass
+                else:
+                    logger.error(f"💥 All {max_retries} attempts failed for {filename} - skipping file")
+                    return None
+                    
+            except Exception as e:
+                # Other errors - don't retry, but log appropriately
+                if "10060" in str(e) or "timeout" in str(e).lower() or "connection" in str(e).lower():
+                    # This is likely a connection issue, retry
+                    logger.warning(f"🔄 [T{threading.current_thread().ident % 10000}] Connection-related error on attempt {attempt + 1} for {filename}: {e}")
+                    
+                    if conn:
+                        try:
+                            self.ftp_manager.release_file_stream(conn)
+                        except:
+                            pass
+                    
+                    if attempt < max_retries - 1:
+                        import time
+                        logger.info(f"⏳ Retrying {filename} in {retry_delay[attempt]} seconds...")
+                        time.sleep(retry_delay[attempt])
+                        try:
+                            self.ftp_manager.reconnect()
+                        except:
+                            pass
+                    else:
+                        logger.error(f"💥 All {max_retries} attempts failed for {filename} - skipping file")
+                        return None
+                else:
+                    # Non-recoverable error
+                    logger.error(f"� [T{threading.current_thread().ident % 10000}] Non-recoverable error searching file {filename}: {e}")
+                    if conn:
+                        try:
+                            self.ftp_manager.release_file_stream(conn)
+                        except:
+                            pass
+                    return None
+        
+        # If we get here, all retries failed
+        logger.error(f"💥 All retry attempts exhausted for {filename}")
+        return None
 
     def stop(self):
         """Stop the search operation"""
