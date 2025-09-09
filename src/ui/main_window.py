@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QGroupBox, QSplitter, QHeaderView, QMessageBox, QFileDialog,
     QSpinBox, QFrame
 )
-from PyQt5.QtCore import QDate, QThread, pyqtSignal, QTimer, Qt
+from PyQt5.QtCore import QDate, QThread, pyqtSignal, QTimer, Qt, QObject
 from PyQt5.QtGui import QFont, QIcon
 
 # Add parent directory to path for imports
@@ -32,6 +32,10 @@ from config.settings import (
 )
 from src.ui.styles import COMPLETE_STYLESHEET, BUTTON_STYLES, COLORS
 
+class LogSignalEmitter(QObject):
+    """Signal emitter for thread-safe logging"""
+    log_message = pyqtSignal(str, str)  # message, level
+    
 class SearchThread(QThread):
     """Background search thread"""
     
@@ -72,6 +76,16 @@ class MainWindow(QMainWindow):
         # Initialize settings manager
         self.settings_manager = SettingsManager()
         self.settings = self.settings_manager.load_settings()
+        
+        # Create log signal emitter for thread-safe logging
+        self.log_emitter = LogSignalEmitter()
+        self.log_emitter.log_message.connect(self.handle_log_message)
+        
+        # Progress update throttling
+        self.last_progress_update = 0
+        self.progress_update_interval = 0.1  # Max 10 updates per second
+        self.last_stats_update = 0
+        self.stats_update_interval = 0.5  # Max 2 stats updates per second
         
         self.init_ui()
         self.setup_connections()
@@ -413,10 +427,11 @@ class MainWindow(QMainWindow):
         self.stats_directories = QLabel("📁 Directories: 0")
         self.stats_xml_files = QLabel("📄 XML Files: 0")
         self.stats_processed = QLabel("✅ Processed: 0")
+        self.stats_warnings = QLabel("⚠️ Warnings: 0")
         self.stats_failed = QLabel("❌ Failed: 0")
         self.stats_connections = QLabel("🔌 Connection Issues: 0")
         
-        # Style statistics labels
+        # Style statistics labels as clickable buttons
         stats_style = f"""
             QLabel {{
                 color: {COLORS['text_primary']};
@@ -426,12 +441,31 @@ class MainWindow(QMainWindow):
                 background-color: {COLORS['bg_dark']};
                 border-radius: 4px;
                 margin: 2px;
+                border: 1px solid transparent;
+            }}
+            QLabel:hover {{
+                background-color: {COLORS['primary']};
+                color: white;
+                cursor: pointer;
+                border: 1px solid {COLORS['primary']};
             }}
         """
         
-        for label in [self.stats_directories, self.stats_xml_files, self.stats_processed, 
-                     self.stats_failed, self.stats_connections]:
+        # Make statistics labels clickable
+        clickable_stats = [
+            (self.stats_directories, 'all'),
+            (self.stats_xml_files, 'all'), 
+            (self.stats_processed, 'info'),
+            (self.stats_warnings, 'warning'),
+            (self.stats_failed, 'error'),
+            (self.stats_connections, 'connection')
+        ]
+        
+        for label, filter_type in clickable_stats:
             label.setStyleSheet(stats_style)
+            label.setCursor(Qt.PointingHandCursor)
+            # Add click event
+            label.mousePressEvent = lambda event, ft=filter_type: self.filter_logs(ft)
             stats_layout.addWidget(label)
         
         stats_layout.addStretch()
@@ -468,9 +502,14 @@ class MainWindow(QMainWindow):
             'directories': 0,
             'xml_files': 0,
             'processed': 0,
+            'warnings': 0,
             'failed': 0,
             'connection_issues': 0
         }
+        
+        # Store all log messages for filtering
+        self.all_log_messages = []
+        self.current_filter = 'all'
         
         # Add to tab
         self.tab_widget.addTab(log_widget, "Logs")
@@ -687,7 +726,16 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Stopping search...")
     
     def on_search_progress(self, status: dict):
-        """Handle search progress update"""
+        """Handle search progress update with throttling"""
+        import time
+        current_time = time.time()
+        
+        # Throttle progress updates to prevent UI lag
+        if current_time - self.last_progress_update < self.progress_update_interval:
+            return
+        
+        self.last_progress_update = current_time
+        
         dirs_processed = status['directories_processed']
         dirs_total = status['directories_total']
         files_processed = status['files_processed']
@@ -695,14 +743,17 @@ class MainWindow(QMainWindow):
         matches_found = status['matches_found']
         current_file = status['current_file']
         
-        # Update progress bar
+        # Update progress bar (lightweight operation)
         if files_total > 0:
             progress = int((files_processed / files_total) * 100)
             self.progress_bar.setValue(progress)
         
-        # Update status
+        # Update status (lightweight operation)
         status_text = f"Processing: {dirs_processed}/{dirs_total} directories · {files_processed}/{files_total} files · {matches_found} matches"
         if current_file:
+            # Truncate long filenames to prevent UI lag
+            if len(current_file) > 50:
+                current_file = current_file[:47] + "..."
             status_text += f" · {current_file}"
         
         self.status_label.setText(status_text)
@@ -982,9 +1033,9 @@ class MainWindow(QMainWindow):
     def setup_custom_logging(self):
         """Setup custom logging to capture and display logs in UI"""
         class UILogHandler(logging.Handler):
-            def __init__(self, main_window):
+            def __init__(self, log_emitter):
                 super().__init__()
-                self.main_window = main_window
+                self.log_emitter = log_emitter
                 
             def emit(self, record):
                 try:
@@ -992,20 +1043,17 @@ class MainWindow(QMainWindow):
                     msg = self.format(record)
                     level = record.levelname
                     
-                    # Send to main window for display
-                    self.main_window.add_log_message(msg, level)
-                    
-                    # Update statistics based on log content
-                    self.main_window.update_log_statistics(msg, level)
+                    # Emit signal for thread-safe UI update (non-blocking)
+                    self.log_emitter.log_message.emit(msg, level)
                     
                 except Exception:
                     pass  # Prevent logging errors from breaking the app
         
-        # Create and configure handler
-        self.ui_log_handler = UILogHandler(self)
+        # Create and configure handler with signal emitter
+        self.ui_log_handler = UILogHandler(self.log_emitter)
         self.ui_log_handler.setLevel(logging.INFO)
         
-        # Format: timestamp - level - message
+        # Format: timestamp - level - message  
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', 
                                     datefmt='%H:%M:%S')
         self.ui_log_handler.setFormatter(formatter)
@@ -1020,11 +1068,62 @@ class MainWindow(QMainWindow):
             logger = logging.getLogger(logger_name)
             logger.setLevel(logging.INFO)
     
+    def handle_log_message(self, message: str, level: str):
+        """Handle log message from signal (runs on UI thread)"""
+        # This runs on UI thread, so it's safe to update UI
+        self.add_log_message(message, level)
+        self.update_log_statistics(message, level)
+    
     def add_log_message(self, message: str, level: str):
-        """Add a log message to the log display with color coding"""
+        """Add a log message to the log display with color coding (optimized)"""
         if not hasattr(self, 'log_display'):
             return
-            
+        
+        # Store message for filtering
+        log_entry = {
+            'message': message,
+            'level': level,
+            'timestamp': datetime.now(),
+            'is_connection_related': any(keyword in message.lower() for keyword in 
+                                       ['connection', '10060', 'timeout', 'host', 'network', 'refused'])
+        }
+        self.all_log_messages.append(log_entry)
+        
+        # Limit stored messages to prevent memory issues
+        if len(self.all_log_messages) > 2000:
+            self.all_log_messages = self.all_log_messages[-1000:]  # Keep last 1000
+        
+        # Only display if matches current filter
+        if self.should_display_log(log_entry):
+            self.display_log_entry(log_entry)
+    
+    def should_display_log(self, log_entry):
+        """Check if log entry should be displayed based on current filter"""
+        if self.current_filter == 'all':
+            return True
+        elif self.current_filter == 'info' and log_entry['level'] == 'INFO':
+            return True
+        elif self.current_filter == 'warning' and log_entry['level'] == 'WARNING':
+            return True
+        elif self.current_filter == 'error' and log_entry['level'] == 'ERROR':
+            return True
+        elif self.current_filter == 'connection' and log_entry['is_connection_related']:
+            return True
+        return False
+    
+    def display_log_entry(self, log_entry):
+        """Display a single log entry in the log display"""
+        # Limit log display size to prevent memory issues and UI lag
+        max_log_lines = 1000
+        if self.log_display.document().lineCount() > max_log_lines:
+            # Remove old lines to keep memory usage reasonable
+            cursor = self.log_display.textCursor()
+            cursor.movePosition(cursor.Start)
+            for _ in range(100):  # Remove first 100 lines
+                cursor.select(cursor.LineUnderCursor)
+                cursor.movePosition(cursor.Down)
+                cursor.removeSelectedText()
+        
         # Color coding based on log level
         color_map = {
             'INFO': COLORS['text_primary'],
@@ -1034,19 +1133,45 @@ class MainWindow(QMainWindow):
             'CRITICAL': COLORS['error']
         }
         
-        color = color_map.get(level, COLORS['text_primary'])
+        color = color_map.get(log_entry['level'], COLORS['text_primary'])
         
-        # Format message with HTML for coloring
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        formatted_msg = f'<span style="color: {color};">[{level}] {message}</span>'
+        # Format message with HTML for coloring (lightweight)
+        formatted_msg = f'<span style="color: {color};">[{log_entry["level"]}] {log_entry["message"]}</span>'
         
-        # Add to log display (use QTextEdit's HTML capabilities)
+        # Add to log display using append (more efficient than manual cursor operations)
         self.log_display.append(formatted_msg)
         
-        # Auto-scroll to bottom
-        cursor = self.log_display.textCursor()
-        cursor.movePosition(cursor.End)
-        self.log_display.setTextCursor(cursor)
+        # Only auto-scroll if user is at bottom (prevent scroll interruption)
+        scrollbar = self.log_display.verticalScrollBar()
+        is_at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+        if is_at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
+    
+    def filter_logs(self, filter_type):
+        """Filter logs based on type"""
+        self.current_filter = filter_type
+        
+        # Clear current display
+        self.log_display.clear()
+        
+        # Re-display filtered messages
+        for log_entry in self.all_log_messages:
+            if self.should_display_log(log_entry):
+                self.display_log_entry(log_entry)
+        
+        # Update filter indicator in status
+        filter_names = {
+            'all': 'All Logs',
+            'info': 'Info Only', 
+            'warning': 'Warnings Only',
+            'error': 'Errors Only',
+            'connection': 'Connection Issues Only'
+        }
+        
+        filter_name = filter_names.get(filter_type, 'Unknown Filter')
+        
+        # Add filter status message
+        self.log_display.append(f'<span style="color: {COLORS["primary"]}; font-weight: bold;">=== Filter: {filter_name} ===</span>')
     
     def update_log_statistics(self, message: str, level: str):
         """Update log statistics based on message content"""
@@ -1075,6 +1200,10 @@ class MainWindow(QMainWindow):
                 
         elif 'search completed' in msg_lower and 'result: found' in msg_lower:
             self.log_stats['processed'] += 1
+        
+        # Track by log level
+        if level == 'WARNING':
+            self.log_stats['warnings'] += 1
             
         elif level == 'ERROR' and any(keyword in msg_lower for keyword in 
                                      ['connection', '10060', 'timeout', 'host']):
@@ -1088,11 +1217,21 @@ class MainWindow(QMainWindow):
         self.update_statistics_display()
     
     def update_statistics_display(self):
-        """Update the statistics labels"""
+        """Update the statistics labels with throttling"""
+        import time
+        current_time = time.time()
+        
+        # Throttle statistics updates to prevent UI lag
+        if current_time - self.last_stats_update < self.stats_update_interval:
+            return
+        
+        self.last_stats_update = current_time
+        
         if hasattr(self, 'stats_directories'):
             self.stats_directories.setText(f"📁 Directories: {self.log_stats['directories']}")
             self.stats_xml_files.setText(f"📄 XML Files: {self.log_stats['xml_files']}")
             self.stats_processed.setText(f"✅ Processed: {self.log_stats['processed']}")
+            self.stats_warnings.setText(f"⚠️ Warnings: {self.log_stats['warnings']}")
             self.stats_failed.setText(f"❌ Failed: {self.log_stats['failed']}")
             self.stats_connections.setText(f"🔌 Connection Issues: {self.log_stats['connection_issues']}")
     
@@ -1106,9 +1245,14 @@ class MainWindow(QMainWindow):
             'directories': 0,
             'xml_files': 0,
             'processed': 0,
+            'warnings': 0,
             'failed': 0,
             'connection_issues': 0
         }
+        
+        # Clear stored messages and reset filter
+        self.all_log_messages = []
+        self.current_filter = 'all'
         
         self.update_statistics_display()
         
