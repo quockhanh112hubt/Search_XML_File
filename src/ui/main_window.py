@@ -166,6 +166,7 @@ class MainWindow(QMainWindow):
         
         # Date range group
         date_group = QGroupBox("Date Range")
+        date_group.setObjectName("DateRangeGroup")  # Set object name for finding
         date_layout = QGridLayout(date_group)
         
         # Quick date range
@@ -207,32 +208,62 @@ class MainWindow(QMainWindow):
         search_group = QGroupBox("Search Parameters")
         search_layout = QGridLayout(search_group)
         
-        search_layout.addWidget(QLabel("Keywords:"), 0, 0)
+        # Search source selection
+        search_layout.addWidget(QLabel("Search Source:"), 0, 0)
+        self.search_source = QComboBox()
+        self.search_source.addItems([
+            "🌐 FTP Server (Content)", 
+            "📁 Local Directory", 
+            "📊 FTP Server (Filename Only)"
+        ])
+        self.search_source.currentTextChanged.connect(self.on_search_source_changed)
+        search_layout.addWidget(self.search_source, 0, 1, 1, 2)
+        
+        # Local directory selection (initially hidden)
+        self.local_dir_label = QLabel("Local Directory:")
+        self.local_dir_input = QLineEdit()
+        self.local_dir_input.setPlaceholderText("Select directory containing XML files...")
+        self.local_dir_input.setReadOnly(True)
+        self.local_dir_browse = QPushButton("Browse...")
+        self.local_dir_browse.clicked.connect(self.browse_local_directory)
+        self.local_dir_browse.setStyleSheet(BUTTON_STYLES['secondary'])
+        self.local_dir_browse.setMaximumWidth(80)
+        
+        search_layout.addWidget(self.local_dir_label, 1, 0)
+        search_layout.addWidget(self.local_dir_input, 1, 1)
+        search_layout.addWidget(self.local_dir_browse, 1, 2)
+        
+        # Initially hide local directory controls
+        self.local_dir_label.setVisible(False)
+        self.local_dir_input.setVisible(False)
+        self.local_dir_browse.setVisible(False)
+        
+        search_layout.addWidget(QLabel("Keywords:"), 2, 0)
         self.keywords_input = QTextEdit()
         self.keywords_input.setMaximumHeight(80)
         self.keywords_input.setPlaceholderText("Enter keywords (one per line)")
-        search_layout.addWidget(self.keywords_input, 0, 1, 2, 2)
+        search_layout.addWidget(self.keywords_input, 2, 1, 2, 2)
         
-        search_layout.addWidget(QLabel("Search Mode:"), 2, 0)
+        search_layout.addWidget(QLabel("Search Mode:"), 4, 0)
         self.search_mode = QComboBox()
         self.search_mode.addItems(["Text Contains", "Regex Pattern", "XPath Query"])
-        search_layout.addWidget(self.search_mode, 2, 1)
+        search_layout.addWidget(self.search_mode, 4, 1)
         
         self.case_sensitive = QCheckBox("Case Sensitive")
         self.setup_custom_checkbox(self.case_sensitive)
-        search_layout.addWidget(self.case_sensitive, 2, 2)
+        search_layout.addWidget(self.case_sensitive, 4, 2)
         
-        search_layout.addWidget(QLabel("Max Threads:"), 3, 0)
+        search_layout.addWidget(QLabel("Max Threads:"), 5, 0)
         self.max_threads = QSpinBox()
         self.max_threads.setRange(1, 20)
         self.max_threads.setValue(MAX_WORKER_THREADS)
-        search_layout.addWidget(self.max_threads, 3, 1)
+        search_layout.addWidget(self.max_threads, 5, 1)
         
         # Search options
         self.find_all_matches = QCheckBox("Find all matches per file")
         self.setup_custom_checkbox(self.find_all_matches)
         self.find_all_matches.setToolTip("If unchecked, stops at first match per file (faster)")
-        search_layout.addWidget(self.find_all_matches, 3, 2)
+        search_layout.addWidget(self.find_all_matches, 5, 2)
         
         layout.addWidget(search_group)
         
@@ -656,33 +687,55 @@ class MainWindow(QMainWindow):
     
     def start_search(self):
         """Start search operation"""
-        # Validate inputs
-        if not self.ftp_manager.is_connected:
-            QMessageBox.warning(self, "Warning", "Please connect to FTP server first")
-            self.tab_widget.setCurrentIndex(1)  # Switch to settings tab
-            return
+        # Get search source
+        search_source = self.search_source.currentText()
+        is_ftp_content = "Content" in search_source
+        is_local = "Local Directory" in search_source  
+        is_ftp_filename = "Filename Only" in search_source
         
+        # Validate inputs based on search source
+        if is_ftp_content or is_ftp_filename:
+            if not self.ftp_manager.is_connected:
+                QMessageBox.warning(self, "Warning", "Please connect to FTP server first")
+                self.tab_widget.setCurrentIndex(1)  # Switch to settings tab
+                return
+        elif is_local:
+            local_dir = self.local_dir_input.text().strip()
+            if not local_dir:
+                QMessageBox.warning(self, "Warning", "Please select a local directory to search")
+                return
+            if not os.path.exists(local_dir):
+                QMessageBox.warning(self, "Warning", "Selected directory does not exist")
+                return
+
         keywords_text = self.keywords_input.toPlainText().strip()
         if not keywords_text:
-            QMessageBox.warning(self, "Warning", "Please enter keywords to search")
+            keyword_type = "filename patterns" if is_ftp_filename else "keywords"
+            QMessageBox.warning(self, "Warning", f"Please enter {keyword_type} to search")
             return
         
         # Prepare search parameters
         keywords = [line.strip() for line in keywords_text.split('\n') if line.strip()]
         
         search_params = {
-            'start_date': self.start_date.date().toPyDate(),
-            'end_date': self.end_date.date().toPyDate(),
+            'search_source': search_source,
             'keywords': keywords,
             'search_mode': self.search_mode.currentText().lower().replace(' ', '_'),
             'case_sensitive': self.case_sensitive.isChecked(),
             'file_pattern': self.file_pattern.text().strip() or None,
             'max_threads': self.max_threads.value(),
             'find_all_matches': self.find_all_matches.isChecked(),
-            # Add directory settings
-            'source_directory': self.source_directory.text().strip() or 'SAMSUNG',
-            'send_file_directory': self.send_file_directory.text().strip() or 'Send File'
         }
+        
+        # Add source-specific parameters
+        if is_local:
+            search_params['local_directory'] = self.local_dir_input.text().strip()
+        else:
+            # FTP parameters
+            search_params['start_date'] = self.start_date.date().toPyDate()
+            search_params['end_date'] = self.end_date.date().toPyDate()
+            search_params['source_directory'] = self.source_directory.text().strip() or 'SAMSUNG'
+            search_params['send_file_directory'] = self.send_file_directory.text().strip() or 'Send File'
         
         # Convert search mode
         if 'regex' in search_params['search_mode']:
@@ -1258,3 +1311,77 @@ class MainWindow(QMainWindow):
         
         # Add initial log message
         self.add_log_message("Logs cleared", "INFO")
+    
+    def on_search_source_changed(self, source_text):
+        """Handle search source change"""
+        is_local = "Local Directory" in source_text
+        is_filename_only = "Filename Only" in source_text
+        
+        # Show/hide local directory controls
+        self.local_dir_label.setVisible(is_local)
+        self.local_dir_input.setVisible(is_local)
+        self.local_dir_browse.setVisible(is_local)
+        
+        # Update file pattern based on search mode
+        if is_local:
+            # For local search, clear file pattern to include all XML files
+            self.file_pattern.clear()
+            self.file_pattern.setPlaceholderText("e.g., *.xml or leave empty for all XML files")
+        else:
+            # For FTP search, restore default pattern if empty
+            if not self.file_pattern.text().strip():
+                self.file_pattern.setText("TCO_*_KMC_*.xml")
+            self.file_pattern.setPlaceholderText("e.g., TCO_*_KMC_*.xml")
+        
+        # Update keywords placeholder based on mode
+        if is_filename_only:
+            self.keywords_input.setPlaceholderText("Enter filename patterns (e.g., ABC for *ABC*.xml)")
+        else:
+            self.keywords_input.setPlaceholderText("Enter keywords (one per line)")
+        
+        # Show/hide date range for local search (local search doesn't use date-based directories)
+        date_group = self.findChild(QGroupBox, "DateRangeGroup")
+        if date_group:
+            date_group.setVisible(not is_local)
+        
+        # Update search mode options for filename search
+        if is_filename_only:
+            # For filename search, only allow text contains and regex
+            current_mode = self.search_mode.currentText()
+            self.search_mode.clear()
+            self.search_mode.addItems(["Text Contains", "Regex Pattern"])
+            if "XPath" not in current_mode:
+                if "Regex" in current_mode:
+                    self.search_mode.setCurrentText("Regex Pattern")
+                else:
+                    self.search_mode.setCurrentText("Text Contains")
+        else:
+            # Restore full search mode options
+            current_mode = self.search_mode.currentText()
+            self.search_mode.clear()
+            self.search_mode.addItems(["Text Contains", "Regex Pattern", "XPath Query"])
+            self.search_mode.setCurrentText(current_mode if current_mode else "Text Contains")
+    
+    def browse_local_directory(self):
+        """Browse for local directory containing XML files"""
+        directory = QFileDialog.getExistingDirectory(
+            self, 
+            "Select Directory Containing XML Files",
+            self.local_dir_input.text() or os.path.expanduser("~")
+        )
+        
+        if directory:
+            self.local_dir_input.setText(directory)
+            
+            # Quick scan to show XML file count
+            xml_count = 0
+            try:
+                for root, dirs, files in os.walk(directory):
+                    xml_count += len([f for f in files if f.lower().endswith('.xml')])
+                    if xml_count > 1000:  # Limit scan for performance
+                        xml_count = "1000+"
+                        break
+                        
+                self.update_connection_status(f"Selected directory with {xml_count} XML files", 'success')
+            except Exception as e:
+                self.update_connection_status(f"Directory selected: {os.path.basename(directory)}", 'info')

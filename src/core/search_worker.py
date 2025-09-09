@@ -6,6 +6,7 @@ Handles multi-threaded search operations
 import time
 import logging
 import threading
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue, Empty
 from threading import Event, Lock
@@ -13,6 +14,7 @@ from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime
 
 from .ftp_manager import FTPManager
+from .local_file_manager import LocalFileManager, LocalSearchResult
 from .search_engine import SearchEngineFactory, SearchResult
 from config.settings import MAX_WORKER_THREADS, MAX_FILE_SIZE_MB
 
@@ -75,8 +77,9 @@ class SearchProgress:
 class SearchWorker:
     """Main search worker coordinating the search operation"""
     
-    def __init__(self, ftp_manager: FTPManager):
+    def __init__(self, ftp_manager: FTPManager = None):
         self.ftp_manager = ftp_manager
+        self.local_file_manager = LocalFileManager()
         self.progress = SearchProgress()
         self.results = []
         self.results_lock = Lock()
@@ -89,19 +92,39 @@ class SearchWorker:
         
         Args:
             search_params: Dictionary containing:
-                - start_date: datetime
-                - end_date: datetime
+                - search_source: str ('FTP Server (Content)', 'Local Directory', 'FTP Server (Filename Only)')
                 - keywords: List[str]
                 - search_mode: str ('text', 'regex', 'xpath')
                 - case_sensitive: bool
                 - file_pattern: str
                 - max_threads: int
+                - start_date: datetime (for FTP)
+                - end_date: datetime (for FTP)
+                - local_directory: str (for local search)
             progress_callback: Function to call with progress updates
         """
         
         self.results = []
         self.stop_event.clear()
         
+        try:
+            # Determine search source
+            search_source = search_params.get('search_source', '🌐 FTP Server (Content)')
+            
+            if 'Local Directory' in search_source:
+                return self._search_local_directory(search_params, progress_callback)
+            elif 'Filename Only' in search_source:
+                return self._search_ftp_filenames(search_params, progress_callback)
+            else:
+                return self._search_ftp_content(search_params, progress_callback)
+                
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            raise e
+    
+    def _search_ftp_content(self, search_params: Dict[str, Any], 
+                           progress_callback: Optional[Callable] = None) -> List[SearchResult]:
+        """Original FTP content search functionality"""
         try:
             # Extract parameters
             start_date = search_params['start_date']
@@ -218,8 +241,154 @@ class SearchWorker:
             return self.results
             
         except Exception as e:
-            logger.error(f"Search failed: {e}")
+            logger.error(f"FTP content search failed: {e}")
             raise
+    
+    def _search_local_directory(self, search_params: Dict[str, Any], 
+                               progress_callback: Optional[Callable] = None) -> List[SearchResult]:
+        """Local directory search functionality (simplified like SearchXML.py)"""
+        try:
+            # Extract parameters
+            local_directory = search_params['local_directory']
+            keywords = search_params['keywords']
+            search_mode = search_params.get('search_mode', 'text')
+            case_sensitive = search_params.get('case_sensitive', False)
+            file_pattern = search_params.get('file_pattern', '')
+            max_threads = search_params.get('max_threads', MAX_WORKER_THREADS)
+            find_all_matches = search_params.get('find_all_matches', False)
+            
+            # Validate parameters
+            if not keywords:
+                raise ValueError("No keywords provided")
+            
+            # Set base directory
+            if not self.local_file_manager.set_base_directory(local_directory):
+                raise ValueError(f"Cannot access directory: {local_directory}")
+            
+            # Discover XML files
+            logger.info(f"Discovering XML files in: {local_directory}")
+            xml_files = self.local_file_manager.discover_xml_files(file_pattern)
+            
+            if not xml_files:
+                logger.warning("No XML files found in directory")
+                return []
+            
+            # Filter out very large files
+            filtered_files = []
+            for rel_path, size in xml_files:
+                if size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                    logger.warning(f"Skipping large file: {rel_path} ({size} bytes)")
+                    continue
+                filtered_files.append((rel_path, size))
+            
+            # Initialize progress (use 1 directory for local search)
+            self.progress.set_totals(1, len(filtered_files))
+            self.progress.update_directory("Local Directory")
+            
+            # Log search info
+            logger.info(f"Found {len(filtered_files)} XML files to search in local directory")
+            
+            if len(filtered_files) == 0:
+                logger.warning("No accessible XML files found to search")
+                return []
+            
+            # Use simple search approach like SearchXML.py
+            logger.info(f"Starting local search with {max_threads} threads...")
+            
+            found_matches = {}
+            
+            # Simple file processing function (like SearchXML.py)
+            def process_local_file(file_info):
+                """Process a single local file (simplified like SearchXML.py)"""
+                rel_path, size = file_info
+                filename = os.path.basename(rel_path)
+                
+                if self.stop_event.is_set():
+                    return None
+                    
+                try:
+                    # Read file content directly
+                    content = self.local_file_manager.get_file_stream(rel_path)
+                    if content is None:
+                        logger.warning(f"Could not read local file: {filename}")
+                        return None
+                    
+                    # Simple string search (like SearchXML.py)
+                    for keyword in keywords:
+                        search_keyword = keyword if case_sensitive else keyword.lower()
+                        search_content = content if case_sensitive else content.lower()
+                        
+                        count = search_content.count(search_keyword)
+                        if count > 0:
+                            # Create search result
+                            result = SearchResult(
+                                date_dir=os.path.dirname(rel_path) or ".",
+                                filename=filename,
+                                match_type="Text Match",
+                                match_content=f"Found '{keyword}' {count} times",
+                                line_number=1
+                            )
+                            
+                            with self.results_lock:
+                                self.results.append(result)
+                            
+                            logger.info(f"✓ Match found in {filename}: '{keyword}' ({count} times)")
+                            return result
+                    
+                    logger.debug(f"✗ No match in {filename}")
+                    return None
+                    
+                except Exception as e:
+                    error_msg = f"Error processing local file {filename}: {e}"
+                    logger.error(error_msg)
+                    return None
+            
+            # Execute search with thread pool (like SearchXML.py)
+            with ThreadPoolExecutor(max_workers=max_threads) as executor:
+                # Submit all tasks
+                futures = []
+                for file_info in filtered_files:
+                    future = executor.submit(process_local_file, file_info)
+                    futures.append((future, file_info))
+                
+                # Process completed tasks
+                for future, file_info in futures:
+                    if self.stop_event.is_set():
+                        logger.info("Local search stopped by user")
+                        break
+                        
+                    rel_path, size = file_info
+                    filename = os.path.basename(rel_path)
+                    
+                    try:
+                        result = future.result()
+                        if result:
+                            self.progress.add_match()
+                        
+                        self.progress.update_file(filename)
+                        
+                        # Call progress callback
+                        if progress_callback:
+                            progress_callback(self.progress.get_status())
+                            
+                    except Exception as e:
+                        error_msg = f"Error processing {filename}: {e}"
+                        logger.error(error_msg)
+                        self.progress.add_error(error_msg)
+            
+            logger.info(f"Local search completed. Found {len(self.results)} matches.")
+            return self.results
+            
+        except Exception as e:
+            logger.error(f"Local directory search failed: {e}")
+            raise
+    
+    def _search_ftp_filenames(self, search_params: Dict[str, Any], 
+                             progress_callback: Optional[Callable] = None) -> List[SearchResult]:
+        """FTP filename-only search functionality (placeholder for now)"""
+        # TODO: Implement filename-based search
+        logger.info("FTP filename search not yet implemented")
+        return []
     
     def _create_search_engine(self, keywords: List[str], search_mode: str, 
                              case_sensitive: bool):
