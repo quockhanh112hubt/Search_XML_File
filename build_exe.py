@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Paths
 script_dir = Path(__file__).parent
-main_script = script_dir / "main.py"
+main_script = script_dir / "Search_XML_File.py"
 icon_path = script_dir / "Resource" / "icon.ico"
 dist_dir = script_dir / "dist"
 build_dir = script_dir / "build"
