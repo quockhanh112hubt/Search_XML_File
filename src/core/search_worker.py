@@ -297,9 +297,9 @@ class SearchWorker:
             
             found_matches = {}
             
-            # Simple file processing function (like SearchXML.py)
+            # Simple file processing function (enhanced like SearchXML.py)
             def process_local_file(file_info):
-                """Process a single local file (simplified like SearchXML.py)"""
+                """Process a single local file (enhanced to find all keywords like SearchXML.py)"""
                 rel_path, size = file_info
                 filename = os.path.basename(rel_path)
                 
@@ -313,14 +313,17 @@ class SearchWorker:
                         logger.warning(f"Could not read local file: {filename}")
                         return None
                     
-                    # Simple string search (like SearchXML.py)
+                    # Track results for this file (like SearchXML.py)
+                    file_results = []
+                    
+                    # Search for each keyword (like SearchXML.py)
                     for keyword in keywords:
                         search_keyword = keyword if case_sensitive else keyword.lower()
                         search_content = content if case_sensitive else content.lower()
                         
                         count = search_content.count(search_keyword)
                         if count > 0:
-                            # Create search result
+                            # Create search result for this keyword
                             result = SearchResult(
                                 date_dir=os.path.dirname(rel_path) or ".",
                                 filename=filename,
@@ -329,14 +332,18 @@ class SearchWorker:
                                 line_number=1
                             )
                             
-                            with self.results_lock:
-                                self.results.append(result)
-                            
+                            file_results.append(result)
                             logger.info(f"✓ Match found in {filename}: '{keyword}' ({count} times)")
-                            return result
                     
-                    logger.debug(f"✗ No match in {filename}")
-                    return None
+                    # Add all results for this file to global results
+                    if file_results:
+                        with self.results_lock:
+                            self.results.extend(file_results)
+                        logger.info(f"✓ Total {len(file_results)} keyword matches found in {filename}")
+                        return file_results  # Return list of results
+                    else:
+                        logger.debug(f"✗ No keywords match in {filename}")
+                        return None
                     
                 except Exception as e:
                     error_msg = f"Error processing local file {filename}: {e}"
@@ -351,7 +358,7 @@ class SearchWorker:
                     future = executor.submit(process_local_file, file_info)
                     futures.append((future, file_info))
                 
-                # Process completed tasks
+                # Process completed tasks (updated to handle multiple results per file)
                 for future, file_info in futures:
                     if self.stop_event.is_set():
                         logger.info("Local search stopped by user")
@@ -363,7 +370,15 @@ class SearchWorker:
                     try:
                         result = future.result()
                         if result:
-                            self.progress.add_match()
+                            # result can be a list of SearchResult or None
+                            if isinstance(result, list):
+                                # Multiple keyword matches in this file
+                                for _ in result:
+                                    self.progress.add_match()
+                                logger.debug(f"Added {len(result)} matches for {filename}")
+                            else:
+                                # Single result (backward compatibility)
+                                self.progress.add_match()
                         
                         self.progress.update_file(filename)
                         
