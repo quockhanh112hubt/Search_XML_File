@@ -385,10 +385,140 @@ class SearchWorker:
     
     def _search_ftp_filenames(self, search_params: Dict[str, Any], 
                              progress_callback: Optional[Callable] = None) -> List[SearchResult]:
-        """FTP filename-only search functionality (placeholder for now)"""
-        # TODO: Implement filename-based search
-        logger.info("FTP filename search not yet implemented")
-        return []
+        """FTP filename-only search functionality"""
+        try:
+            # Extract parameters
+            start_date = search_params['start_date']
+            end_date = search_params['end_date']
+            source_directory = search_params.get('source_directory', '')
+            send_file_directory = search_params.get('send_file_directory', '')
+            keywords = search_params['keywords']  # These are filename patterns
+            file_pattern = search_params.get('file_pattern', '*.xml')
+            case_sensitive = search_params.get('case_sensitive', False)
+            
+            # Validate parameters
+            if not keywords:
+                raise ValueError("No filename patterns provided")
+            
+            logger.info(f"Starting FTP filename search from {start_date} to {end_date}")
+            logger.info(f"Filename patterns to search: {keywords}")
+            
+            # Get date directories
+            date_directories = self.ftp_manager.list_date_directories(start_date, end_date, source_directory)
+            
+            if not date_directories:
+                logger.warning("No directories found in date range")
+                return []
+            
+            # Initialize progress
+            total_dirs = len(date_directories)
+            self.progress.set_totals(total_dirs, 0)  # We'll update file count as we discover
+            
+            logger.info(f"Searching filenames in {total_dirs} directories")
+            
+            total_matches = 0
+            
+            # Search through each date directory
+            for i, date_dir in enumerate(date_directories):
+                if self.stop_event.is_set():
+                    logger.info("FTP filename search stopped by user")
+                    break
+                
+                self.progress.update_directory(date_dir)
+                logger.info(f"Scanning directory {i+1}/{total_dirs}: {date_dir}")
+                
+                try:
+                    # Get all XML files in this directory
+                    files = self.ftp_manager.list_xml_files(
+                        date_dir, file_pattern, source_directory, send_file_directory
+                    )
+                    
+                    if not files:
+                        logger.debug(f"No XML files found in {date_dir}")
+                        continue
+                    
+                    logger.info(f"Found {len(files)} XML files in {date_dir}")
+                    
+                    # Search filenames against patterns
+                    for filename, file_size in files:
+                        if self.stop_event.is_set():
+                            break
+                        
+                        # Check each filename pattern
+                        for pattern in keywords:
+                            pattern = pattern.strip()
+                            if not pattern:
+                                continue
+                            
+                            # Perform filename matching
+                            if self._filename_matches_pattern(filename, pattern, case_sensitive):
+                                # Create result for filename match
+                                result = SearchResult(
+                                    date_dir=date_dir,
+                                    filename=filename,
+                                    match_type="Filename Match",
+                                    match_content=f"Filename matches pattern: '{pattern}'",
+                                    line_number=0  # Not applicable for filename search
+                                )
+                                
+                                with self.results_lock:
+                                    self.results.append(result)
+                                
+                                total_matches += 1
+                                self.progress.add_match()
+                                
+                                logger.info(f"✓ Filename match: {filename} matches '{pattern}'")
+                                break  # Don't duplicate matches for same file
+                        
+                        self.progress.update_file(filename)
+                    
+                    # Call progress callback
+                    if progress_callback:
+                        progress_callback(self.progress.get_status())
+                        
+                except Exception as e:
+                    error_msg = f"Error scanning directory {date_dir}: {e}"
+                    logger.error(error_msg)
+                    self.progress.add_error(error_msg)
+                    continue
+            
+            logger.info(f"FTP filename search completed. Found {total_matches} filename matches.")
+            return self.results
+            
+        except Exception as e:
+            logger.error(f"FTP filename search failed: {e}")
+            raise
+    
+    def _filename_matches_pattern(self, filename: str, pattern: str, case_sensitive: bool = False) -> bool:
+        """Check if filename matches the given pattern"""
+        try:
+            # Prepare strings for comparison
+            search_filename = filename if case_sensitive else filename.lower()
+            search_pattern = pattern if case_sensitive else pattern.lower()
+            
+            # Simple pattern matching strategies:
+            
+            # 1. Exact substring match (most common)
+            if search_pattern in search_filename:
+                return True
+            
+            # 2. Wildcard pattern matching
+            if '*' in pattern or '?' in pattern:
+                import fnmatch
+                return fnmatch.fnmatch(search_filename, search_pattern)
+            
+            # 3. Multiple pattern matching (comma-separated)
+            if ',' in pattern:
+                patterns = [p.strip() for p in pattern.split(',')]
+                for p in patterns:
+                    if self._filename_matches_pattern(filename, p, case_sensitive):
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error matching filename '{filename}' against pattern '{pattern}': {e}")
+            return False
     
     def _create_search_engine(self, keywords: List[str], search_mode: str, 
                              case_sensitive: bool):

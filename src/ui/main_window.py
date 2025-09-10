@@ -1316,33 +1316,51 @@ class MainWindow(QMainWindow):
         """Handle search source change"""
         is_local = "Local Directory" in source_text
         is_filename_only = "Filename Only" in source_text
+        is_ftp_content = "FTP Server Content" in source_text
         
         # Show/hide local directory controls
         self.local_dir_label.setVisible(is_local)
         self.local_dir_input.setVisible(is_local)
         self.local_dir_browse.setVisible(is_local)
         
-        # Update file pattern based on search mode
+        # Update file pattern and keywords based on search mode
         if is_local:
-            # For local search, clear file pattern to include all XML files
+            # Local Directory Search
             self.file_pattern.clear()
             self.file_pattern.setPlaceholderText("e.g., *.xml or leave empty for all XML files")
-        else:
-            # For FTP search, restore default pattern if empty
+            self.keywords_input.setPlaceholderText("Enter content keywords to search (one per line)")
+            
+        elif is_filename_only:
+            # FTP Filename Only Search
+            self.file_pattern.setText("*.xml")  # Search all XML files
+            self.file_pattern.setPlaceholderText("e.g., *.xml (filename pattern to search)")
+            self.keywords_input.setPlaceholderText("Enter filename patterns to match (e.g., ABC, KMC, LDT)")
+            
+        else:  # FTP Content Search
+            # FTP Content Search (default)
             if not self.file_pattern.text().strip():
                 self.file_pattern.setText("TCO_*_KMC_*.xml")
             self.file_pattern.setPlaceholderText("e.g., TCO_*_KMC_*.xml")
-        
-        # Update keywords placeholder based on mode
-        if is_filename_only:
-            self.keywords_input.setPlaceholderText("Enter filename patterns (e.g., ABC for *ABC*.xml)")
-        else:
-            self.keywords_input.setPlaceholderText("Enter keywords (one per line)")
+            self.keywords_input.setPlaceholderText("Enter content keywords to search (one per line)")
         
         # Show/hide date range for local search (local search doesn't use date-based directories)
         date_group = self.findChild(QGroupBox, "DateRangeGroup")
         if date_group:
             date_group.setVisible(not is_local)
+        
+        # Update search mode visibility (filename search doesn't need regex/xpath)
+        search_mode_group = self.findChild(QGroupBox, "SearchModeGroup") 
+        if search_mode_group:
+            search_mode_group.setVisible(not is_filename_only)
+        
+        # Update other controls visibility for filename search
+        if hasattr(self, 'case_sensitive'):
+            # Case sensitive is still useful for filename search
+            self.case_sensitive.setVisible(True)
+        
+        if hasattr(self, 'find_all_matches'):
+            # Find all matches not applicable for filename search
+            self.find_all_matches.setVisible(not is_filename_only)
         
         # Update search mode options for filename search
         if is_filename_only:
