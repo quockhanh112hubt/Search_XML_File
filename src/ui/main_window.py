@@ -847,15 +847,13 @@ class MainWindow(QMainWindow):
             # Force update for debugging
             print(f"DEBUG: UI Update - Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Checked: {files_processed}")
         
-        # Update progress bar based on files processed vs total files found
-        if files_total > 0:
-            progress = int((files_processed / files_total) * 100)
+        # Update progress bar based on directories processed (more reliable than files)
+        if dirs_total > 0:
+            progress = int((dirs_processed / dirs_total) * 100)
             self.progress_bar.setValue(progress)
         else:
-            # If no files found yet, show directory progress
-            if dirs_total > 0:
-                dir_progress = int((dirs_processed / dirs_total) * 100)
-                self.progress_bar.setValue(dir_progress)
+            # If no directories set yet, show 0%
+            self.progress_bar.setValue(0)
         
         # Update status - files_processed should be cumulative files completed, not per-directory
         status_text = f"Scanning: {dirs_processed}/{dirs_total} directories · Checked: {files_processed}/{files_total} XML files · Found: {matches_found} matches"
