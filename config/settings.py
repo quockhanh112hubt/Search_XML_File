@@ -42,5 +42,5 @@ PROGRESS_UPDATE_INTERVAL = 100  # ms
 
 # Logging
 LOG_LEVEL = "INFO"
-LOG_FILE = "xml_search.log"
+LOG_FILE = "logs/xml_search.log"
 MAX_LOG_SIZE_MB = 10
