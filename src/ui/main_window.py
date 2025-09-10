@@ -835,6 +835,7 @@ class MainWindow(QMainWindow):
         dirs_total = status['directories_total']
         files_processed = status['files_processed']
         files_total = status['files_total']
+        current_directory_files = status.get('current_directory_files', 0)
         matches_found = status['matches_found']
         current_file = status['current_file']
         
@@ -855,8 +856,8 @@ class MainWindow(QMainWindow):
             # If no directories set yet, show 0%
             self.progress_bar.setValue(0)
         
-        # Update status - files_processed should be cumulative files completed, not per-directory
-        status_text = f"Scanning: {dirs_processed}/{dirs_total} directories · Checked: {files_processed}/{files_total} XML files · Found: {matches_found} matches"
+        # Update status - show current directory files instead of total processed
+        status_text = f"Scanning: {dirs_processed}/{dirs_total} directories · Current Dir: {current_directory_files} XML files · Found: {matches_found} matches"
         if current_file:
             # Truncate long filenames to prevent UI lag
             if len(current_file) > 50:

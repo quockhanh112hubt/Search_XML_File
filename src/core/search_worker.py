@@ -30,6 +30,7 @@ class SearchProgress:
         self.directories_processed = 0
         self.files_total = 0
         self.files_processed = 0
+        self.current_directory_files = 0  # Files found in current directory
         self.matches_found = 0
         self.current_directory = ""
         self.current_file = ""
@@ -46,6 +47,12 @@ class SearchProgress:
         with self.lock:
             self.current_directory = directory
             self.directories_processed += 1
+            self.current_directory_files = 0  # Reset files count for new directory
+
+    def set_current_directory_files(self, file_count: int):
+        """Set the number of files found in current directory"""
+        with self.lock:
+            self.current_directory_files = file_count
     
     def update_file(self, filename: str):
         with self.lock:
@@ -73,6 +80,7 @@ class SearchProgress:
                 'directories_total': self.directories_total,
                 'files_processed': self.files_processed,
                 'files_total': self.files_total,
+                'current_directory_files': self.current_directory_files,
                 'matches_found': self.matches_found,
                 'current_directory': self.current_directory,
                 'current_file': self.current_file,
@@ -218,6 +226,9 @@ class SearchWorker:
                         
                         # Update total files count progressively
                         self.progress.increment_files_total(len(files))
+                        
+                        # Set current directory files count
+                        self.progress.set_current_directory_files(len(files))
                         
                         # Call progress callback immediately to update UI with new file count
                         if progress_callback:
@@ -618,6 +629,9 @@ class SearchWorker:
                     
                     # Update total files count for progress tracking
                     self.progress.increment_files_total(len(files))
+                    
+                    # Set current directory files count
+                    self.progress.set_current_directory_files(len(files))
                     
                     # Call progress callback immediately to update UI with new file count
                     if progress_callback:
