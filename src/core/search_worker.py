@@ -7,6 +7,7 @@ import time
 import logging
 import threading
 import os
+import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue, Empty
 from threading import Event, Lock
@@ -154,96 +155,133 @@ class SearchWorker:
             if not date_directories:
                 logger.warning("No directories found in date range")
                 return []
-            
-            # Collect all files to process
-            all_tasks = []
-            total_files = 0
-            
-            for date_dir in date_directories:
-                if self.stop_event.is_set():
-                    break
-                    
-                files = self.ftp_manager.list_xml_files(
-                    date_dir, file_pattern, source_directory, send_file_directory
-                )
-                for filename, file_size in files:
-                    # Skip very large files
-                    if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
-                        logger.warning(f"Skipping large file: {filename} ({file_size} bytes)")
-                        continue
-                    
-                    all_tasks.append((date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches))
-                    total_files += 1
-            
-            # Initialize progress
-            self.progress.set_totals(len(date_directories), total_files)
+
+            # Initialize progress with directory count first
+            self.progress.set_totals(len(date_directories), 0)  # Files count will be updated as we go
             
             # Log search info
-            logger.info(f"Found {len(date_directories)} directories with {total_files} XML files to search")
+            logger.info(f"Found {len(date_directories)} directories for streaming search")
             logger.info(f"Directories: {date_directories}")
-            
-            if total_files == 0:
-                logger.warning("No XML files found to search")
-                return []
             
             # Create search engine
             search_engine = self._create_search_engine(keywords, search_mode, case_sensitive)
             
-            # Execute search with thread pool (restored multi-threading)
-            logger.info(f"Starting multi-threaded search with {max_threads} threads...")
-            
-            with ThreadPoolExecutor(max_workers=max_threads) as executor:
-                # Submit all tasks
-                future_to_task = {
-                    executor.submit(self._search_file, task, search_engine): task 
-                    for task in all_tasks
-                }
-                
-                # Process completed tasks
-                for future in as_completed(future_to_task):
-                    if self.stop_event.is_set():
-                        logger.info("Search stopped by user")
-                        break
-                        
-                    task = future_to_task[future]
-                    date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches = task
-                    
-                    try:
-                        result = future.result()
-                        if result:
-                            with self.results_lock:
-                                self.results.append(result)
-                            self.progress.add_match()
-                            logger.info(f"✓ Match found in {filename}: {result.match_type}")
-                        else:
-                            logger.debug(f"✗ No match in {filename}")
-                        
-                        self.progress.update_file(filename)
-                        
-                        # Call progress callback
-                        if progress_callback:
-                            progress_callback(self.progress.get_status())
-                            
-                    except Exception as e:
-                        error_msg = f"Error processing {filename}: {e}"
-                        logger.error(error_msg)
-                        self.progress.add_error(error_msg)
-            
-            logger.info(f"Search completed. Found {len(self.results)} matches.")
-            
-            # Close only connection pool, keep main connection alive
-            try:
-                if hasattr(self.ftp_manager, 'pool') and self.ftp_manager.pool:
-                    self.ftp_manager.pool.close_all()
-                    logger.info("FTP connection pool closed")
-            except Exception as e:
-                logger.error(f"Error closing FTP connection pool: {e}")
-            
-            return self.results
+            # Process directories in streaming batches
+            logger.info(f"Starting streaming search with {max_threads} threads...")
+            return self._execute_streaming_search(
+                date_directories, file_pattern, source_directory, 
+                send_file_directory, find_all_matches, search_engine, 
+                max_threads, progress_callback
+            )
             
         except Exception as e:
             logger.error(f"FTP content search failed: {e}")
-            raise
+            return []
+    
+    def _execute_streaming_search(self, date_directories, file_pattern, source_directory, 
+                                send_file_directory, find_all_matches, search_engine, 
+                                max_threads, progress_callback):
+        """Execute search using streaming approach to handle large datasets"""
+        try:
+            BATCH_SIZE = 20  # Reduced from 50 to 20 for better memory management
+            processed_directories = 0
+            total_files_processed = 0
+            
+            # Reduce thread count for very large datasets
+            effective_threads = min(max_threads, 4) if len(date_directories) > 100 else max_threads
+            logger.info(f"Using {effective_threads} threads for large dataset processing")
+            
+            with ThreadPoolExecutor(max_workers=effective_threads) as executor:
+                for date_dir in date_directories:
+                    if self.stop_event.is_set():
+                        break
+                        
+                    try:
+                        # Get files for this directory
+                        files = self.ftp_manager.list_xml_files(
+                            date_dir, file_pattern, source_directory, send_file_directory
+                        )
+                        
+                        if not files:
+                            processed_directories += 1
+                            continue
+                        
+                        # Update total files count for progress
+                        self.progress.total_files += len(files)
+                        
+                        # Process files in batches
+                        for i in range(0, len(files), BATCH_SIZE):
+                            if self.stop_event.is_set():
+                                break
+                                
+                            batch = files[i:i + BATCH_SIZE]
+                            batch_tasks = []
+                            
+                            # Create tasks for this batch
+                            for filename, file_size in batch:
+                                # Skip very large files
+                                if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                                    logger.warning(f"Skipping large file: {filename} ({file_size} bytes)")
+                                    continue
+                                
+                                task = (date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches)
+                                batch_tasks.append(task)
+                            
+                            if not batch_tasks:
+                                continue
+                            
+                            # Submit batch for processing
+                            future_to_task = {
+                                executor.submit(self._search_file, task, search_engine): task 
+                                for task in batch_tasks
+                            }
+                            
+                            # Wait for batch completion
+                            for future in as_completed(future_to_task):
+                                if self.stop_event.is_set():
+                                    break
+                                    
+                                try:
+                                    result = future.result()
+                                    if result:
+                                        with self.results_lock:
+                                            self.results.append(result)
+                                        self.progress.add_match()
+                                    
+                                    # Update progress
+                                    self.progress.update_file(future_to_task[future][1])  # filename
+                                    total_files_processed += 1
+                                    
+                                    # Call progress callback
+                                    if progress_callback:
+                                        progress_callback(self.progress.get_status())
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error processing file: {e}")
+                                    continue
+                            
+                            # Memory cleanup after each batch
+                            gc.collect()
+                            
+                            # Log batch completion
+                            logger.info(f"Completed batch {i//BATCH_SIZE + 1} of directory {date_dir} ({len(batch_tasks)} files)")
+                        
+                        processed_directories += 1
+                        
+                        # Log directory completion
+                        logger.info(f"Completed directory {date_dir} ({processed_directories}/{len(date_directories)})")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing directory {date_dir}: {e}")
+                        processed_directories += 1
+                        continue
+            
+            logger.info(f"Streaming search completed. Processed {total_files_processed} files from {processed_directories} directories")
+            return self.results.copy()
+            
+        except Exception as e:
+            logger.error(f"Streaming search failed: {e}")
+            return []
     
     def _search_local_directory(self, search_params: Dict[str, Any], 
                                progress_callback: Optional[Callable] = None) -> List[SearchResult]:
