@@ -494,7 +494,7 @@ class MainWindow(QMainWindow):
         # Statistics labels
         self.stats_directories = QLabel("📁 Directories: 0")
         self.stats_xml_files = QLabel("📄 XML Files: 0")
-        self.stats_processed = QLabel("✅ Processed: 0")
+        self.stats_processed = QLabel("✅ Checked: 0")
         self.stats_warnings = QLabel("⚠️ Warnings: 0")
         self.stats_failed = QLabel("❌ Failed: 0")
         self.stats_connections = QLabel("🔌 Connection Issues: 0")
@@ -838,27 +838,32 @@ class MainWindow(QMainWindow):
         matches_found = status['matches_found']
         current_file = status['current_file']
         
-        # Update top stats counters with real-time progress (for TRUE streaming)
+        # Update top stats counters with real-time progress
         if hasattr(self, 'stats_directories'):
             self.stats_directories.setText(f"📁 Directories: {dirs_processed}/{dirs_total}")
             self.stats_xml_files.setText(f"📄 XML Files: {files_total}")
-            self.stats_processed.setText(f"✅ Processed: {files_processed}")
+            self.stats_processed.setText(f"✅ Checked: {files_processed}")
             
             # Force update for debugging
-            print(f"DEBUG: UI Update - Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Processed: {files_processed}")
+            print(f"DEBUG: UI Update - Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Checked: {files_processed}")
         
-        # Update progress bar (lightweight operation)
+        # Update progress bar based on files processed vs total files found
         if files_total > 0:
             progress = int((files_processed / files_total) * 100)
             self.progress_bar.setValue(progress)
+        else:
+            # If no files found yet, show directory progress
+            if dirs_total > 0:
+                dir_progress = int((dirs_processed / dirs_total) * 100)
+                self.progress_bar.setValue(dir_progress)
         
-        # Update status (lightweight operation)
-        status_text = f"Processing: {dirs_processed}/{dirs_total} directories · {files_processed}/{files_total} files · {matches_found} matches"
+        # Update status - files_processed should be cumulative files completed, not per-directory
+        status_text = f"Scanning: {dirs_processed}/{dirs_total} directories · Checked: {files_processed}/{files_total} XML files · Found: {matches_found} matches"
         if current_file:
             # Truncate long filenames to prevent UI lag
             if len(current_file) > 50:
                 current_file = current_file[:47] + "..."
-            status_text += f" · {current_file}"
+            status_text += f" · Current: {current_file}"
         
         self.status_label.setText(status_text)
     
@@ -867,8 +872,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'stats_directories'):
             self.stats_directories.setText(f"📁 Directories: {dirs_processed}/{dirs_total}")
             self.stats_xml_files.setText(f"📄 XML Files: {files_total}")
-            self.stats_processed.setText(f"✅ Processed: {files_processed}")
-            print(f"FORCE UPDATE: Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Processed: {files_processed}")
+            self.stats_processed.setText(f"✅ Checked: {files_processed}")
+            print(f"FORCE UPDATE: Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Checked: {files_processed}")
     
     def on_search_completed(self, results: List[SearchResult]):
         """Handle search completion"""
