@@ -410,6 +410,14 @@ class MainWindow(QMainWindow):
         self.export_excel_button.setEnabled(False)
         controls_layout.addWidget(self.export_excel_button)
         
+        # Download button for FTP files
+        self.download_button = QPushButton("Download")
+        self.download_button.setStyleSheet(BUTTON_STYLES['primary'])
+        self.download_button.setMinimumHeight(32)
+        self.download_button.setEnabled(False)
+        self.download_button.clicked.connect(self.download_selected_files_button)
+        controls_layout.addWidget(self.download_button)
+        
         layout.addLayout(controls_layout)
         
         # Results table
@@ -439,6 +447,9 @@ class MainWindow(QMainWindow):
         # Enable context menu for downloads
         self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self.show_results_context_menu)
+        
+        # Connect selection change to update download button
+        self.results_table.selectionModel().selectionChanged.connect(self.on_results_selection_changed)
         
         layout.addWidget(self.results_table)
         
@@ -776,6 +787,9 @@ class MainWindow(QMainWindow):
         self.current_search_source = search_source  # Save search source for download functionality
         self.update_results_display()
         
+        # Reset download button
+        self.update_download_button_state(0)
+        
         # Start search
         self.search_thread.start()
         
@@ -836,6 +850,9 @@ class MainWindow(QMainWindow):
         # Enable export buttons
         self.export_csv_button.setEnabled(len(results) > 0)
         self.export_excel_button.setEnabled(len(results) > 0)
+        
+        # Update download button state
+        self.update_download_button_state(0)  # No selection initially
     
     def on_search_error(self, error_message: str):
         """Handle search error"""
@@ -1624,3 +1641,75 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.add_log_message(f"FTP download error for {ftp_path}: {str(e)}", "ERROR")
             return False
+    
+    def on_results_selection_changed(self):
+        """Handle results table selection change to update download button"""
+        selected_rows = set()
+        for item in self.results_table.selectedItems():
+            selected_rows.add(item.row())
+        
+        # Update download button text and state
+        self.update_download_button_state(len(selected_rows))
+    
+    def update_download_button_state(self, selected_count: int):
+        """Update download button text and enable state based on selection"""
+        # Check if we have downloadable files (FTP results only)
+        has_ftp_results = self.current_search_source and "Local Directory" not in self.current_search_source
+        
+        if not has_ftp_results:
+            # No FTP results, disable download
+            self.download_button.setText("Download")
+            self.download_button.setEnabled(False)
+            return
+            
+        # Update button text based on selection
+        if selected_count == 0:
+            self.download_button.setText("Download")
+            self.download_button.setEnabled(self.results_table.rowCount() > 0)
+        elif selected_count == 1:
+            self.download_button.setText("Download (1)")
+            self.download_button.setEnabled(True)
+        else:
+            self.download_button.setText(f"Download ({selected_count})")
+            self.download_button.setEnabled(True)
+    
+    def download_selected_files_button(self):
+        """Handle download button click - download selected files or all files if none selected"""
+        if not self.current_search_source or "Local Directory" in self.current_search_source:
+            QMessageBox.information(self, "Info", "Download is only available for FTP search results.")
+            return
+            
+        if not self.ftp_manager.is_connected:
+            QMessageBox.warning(self, "Warning", "Not connected to FTP server!\nPlease connect first.")
+            return
+            
+        # Get selected rows
+        selected_rows = set()
+        for item in self.results_table.selectedItems():
+            selected_rows.add(item.row())
+        
+        # If no selection, download all files
+        if not selected_rows:
+            selected_rows = set(range(self.results_table.rowCount()))
+        
+        if not selected_rows:
+            QMessageBox.information(self, "Info", "No files to download.")
+            return
+            
+        # Collect file information for download
+        downloadable_files = []
+        for row in selected_rows:
+            filename = self.results_table.item(row, 1).text()  # Filename column
+            file_path = self.results_table.item(row, 2).text()  # File Path column  
+            date = self.results_table.item(row, 0).text()  # Date column
+            
+            if filename and file_path:
+                downloadable_files.append({
+                    'filename': filename,
+                    'file_path': file_path,
+                    'date': date,
+                    'row': row
+                })
+        
+        if downloadable_files:
+            self.download_selected_files(downloadable_files)
