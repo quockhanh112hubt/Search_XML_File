@@ -14,6 +14,9 @@ DEFAULT_CHUNK_SIZE = 256 * 1024  # 256KB
 CHUNK_OVERLAP_SIZE = 1024  # 1KB overlap for boundary matches
 MAX_FILE_SIZE_MB = 50  # Skip files larger than this
 
+# Directory Search Optimization
+USE_OPTIMIZED_DIRECTORY_SEARCH = True  # True = fast targeted search, False = original comprehensive search
+
 # Search behavior
 EARLY_TERMINATION_PER_FILE = True  # Stop searching file after first match
 MAX_RESULTS_LIMIT = 0  # 0 = no limit, otherwise set max number of results

@@ -146,8 +146,9 @@ class SearchWorker:
             
             # Get date directories
             logger.info(f"Searching from {start_date} to {end_date}")
+            use_optimized = search_params.get('use_optimized_search', True)
             date_directories = self.ftp_manager.list_date_directories(
-                start_date, end_date, source_directory
+                start_date, end_date, source_directory, use_optimized
             )
             
             if not date_directories:
@@ -419,7 +420,7 @@ class SearchWorker:
             logger.info(f"Filename patterns to search: {keywords}")
             
             # Get date directories
-            date_directories = self.ftp_manager.list_date_directories(start_date, end_date, source_directory)
+            date_directories = self.ftp_manager.list_date_directories(start_date, end_date, source_directory, search_params.get('use_optimized_search', True))
             
             if not date_directories:
                 logger.warning("No directories found in date range")

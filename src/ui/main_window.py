@@ -364,6 +364,23 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(dir_group)
         
+        # Performance options group
+        perf_group = QGroupBox("Performance Options")
+        perf_layout = QGridLayout(perf_group)
+        
+        # Optimized directory search checkbox
+        self.use_optimized_search = QCheckBox("Use Optimized Directory Search")
+        self.use_optimized_search.setChecked(True)  # Default enabled
+        self.setup_custom_checkbox(self.use_optimized_search)
+        perf_layout.addWidget(self.use_optimized_search, 0, 0, 1, 3)
+        
+        # Help text for optimization
+        opt_help_label = QLabel("✓ Faster: Only checks expected date directories\n✗ Slower: Scans all directories then filters")
+        opt_help_label.setStyleSheet("color: #666; font-style: italic; margin-left: 20px;")
+        perf_layout.addWidget(opt_help_label, 1, 0, 1, 3)
+        
+        layout.addWidget(perf_group)
+        
         # Settings controls
         settings_controls = QHBoxLayout()
         
@@ -745,6 +762,7 @@ class MainWindow(QMainWindow):
             'file_pattern': self.file_pattern.text().strip() or None,
             'max_threads': self.max_threads.value(),
             'find_all_matches': self.find_all_matches.isChecked(),
+            'use_optimized_search': self.use_optimized_search.isChecked(),
         }
         
         # Add source-specific parameters
@@ -978,6 +996,7 @@ class MainWindow(QMainWindow):
             self.case_sensitive.setChecked(search_settings.get('case_sensitive', False))
             self.find_all_matches.setChecked(search_settings.get('find_all_matches', False))
             self.max_threads.setValue(search_settings.get('max_threads', 8))
+            self.use_optimized_search.setChecked(search_settings.get('use_optimized_search', True))
             
             # Load UI settings
             ui_settings = self.settings.get('ui', {})
@@ -1016,7 +1035,8 @@ class MainWindow(QMainWindow):
                 'default_file_pattern': self.file_pattern.text().strip() or 'TCO_*_KMC_*.xml',
                 'case_sensitive': self.case_sensitive.isChecked(),
                 'find_all_matches': self.find_all_matches.isChecked(),
-                'max_threads': self.max_threads.value()
+                'max_threads': self.max_threads.value(),
+                'use_optimized_search': self.use_optimized_search.isChecked()
             }
             
             self.settings['ui'] = {

@@ -10,11 +10,12 @@ import logging
 from queue import Queue, Empty
 from threading import Lock
 from typing import Optional, List, Tuple, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config.settings import (
     FTP_TIMEOUT, FTP_MAX_RETRIES, FTP_RETRY_DELAY,
-    FTP_CONNECTION_POOL_SIZE, SOURCE_DIRECTORY, SEND_FILE_DIRECTORY
+    FTP_CONNECTION_POOL_SIZE, SOURCE_DIRECTORY, SEND_FILE_DIRECTORY,
+    USE_OPTIMIZED_DIRECTORY_SEARCH
 )
 
 logger = logging.getLogger(__name__)
@@ -202,29 +203,88 @@ class FTPManager:
             logger.error(f"FTP reconnection failed: {e}")
             return False
         
-    def list_date_directories(self, start_date, end_date, source_directory: str = None) -> List[str]:
-        """List directories within date range"""
+    def list_date_directories(self, start_date, end_date, source_directory: str = None, use_optimized: bool = None) -> List[str]:
+        """List directories within date range using optimized approach"""
         if not self.is_connected:
             return []
-        
+
         # Use provided source directory or default
         source_dir = source_directory or SOURCE_DIRECTORY
         
         # Convert date objects to datetime if needed
         if hasattr(start_date, 'date'):
-            # It's already a datetime object
             start_dt = start_date
         else:
-            # It's a date object, convert to datetime
             start_dt = datetime.combine(start_date, datetime.min.time())
             
         if hasattr(end_date, 'date'):
-            # It's already a datetime object
             end_dt = end_date
         else:
-            # It's a date object, convert to datetime
             end_dt = datetime.combine(end_date, datetime.max.time())
+
+        # Use optimized approach if enabled (parameter overrides global setting)
+        use_optimization = use_optimized if use_optimized is not None else USE_OPTIMIZED_DIRECTORY_SEARCH
+        
+        if use_optimization:
+            try:
+                return self._list_date_directories_optimized(source_dir, start_dt, end_dt)
+            except Exception as e:
+                logger.warning(f"Optimized approach failed: {e}. Falling back to original method.")
+                return self._list_date_directories_original(source_dir, start_dt, end_dt)
+        else:
+            logger.info("Using original comprehensive directory search method")
+            return self._list_date_directories_original(source_dir, start_dt, end_dt)
+
+    def _list_date_directories_optimized(self, source_dir: str, start_dt: datetime, end_dt: datetime) -> List[str]:
+        """Optimized method - only check expected directories"""
+        logger.info(f"Using optimized directory search for range: {start_dt.date()} to {end_dt.date()}")
+        
+        conn = self.pool.get_connection()
+        if not conn:
+            return []
             
+        try:
+            # Navigate to source directory
+            logger.info(f"Navigating to source directory: /{source_dir}")
+            conn.ftp.cwd(f"/{source_dir}")
+            
+            # Generate list of expected directory names
+            expected_dirs = []
+            current_date = start_dt.date()
+            end_date_only = end_dt.date()
+            
+            while current_date <= end_date_only:
+                dir_name = current_date.strftime("%Y%m%d")
+                expected_dirs.append(dir_name)
+                current_date += timedelta(days=1)
+            
+            logger.info(f"Expected directories to check: {expected_dirs} (total: {len(expected_dirs)})")
+            
+            # Check which expected directories actually exist
+            existing_dirs = []
+            original_path = conn.ftp.pwd()
+            
+            for dir_name in expected_dirs:
+                try:
+                    # Try to change to the directory to check if it exists
+                    conn.ftp.cwd(dir_name)
+                    conn.ftp.cwd(original_path)  # Go back to original path
+                    existing_dirs.append(dir_name)
+                    logger.info(f"✓ Directory {dir_name} exists")
+                except Exception:
+                    logger.debug(f"✗ Directory {dir_name} does not exist")
+                    continue
+            
+            logger.info(f"Optimized search completed. Found {len(existing_dirs)} existing directories: {existing_dirs}")
+            return sorted(existing_dirs)
+            
+        finally:
+            self.pool.return_connection(conn)
+
+    def _list_date_directories_original(self, source_dir: str, start_dt: datetime, end_dt: datetime) -> List[str]:
+        """Original method - list all directories then filter"""
+        logger.info(f"Using original directory search method")
+        
         conn = self.pool.get_connection()
         if not conn:
             return []
@@ -252,11 +312,11 @@ class FTPManager:
             
             for line in dirs:
                 parts = line.split()
-                logger.info(f"Processing line: {line}")
+                logger.debug(f"Processing line: {line}")
                 
                 # Flexible parsing - handle different FTP server formats
                 if len(parts) >= 1:
-                    logger.info(f"Line has {len(parts)} parts: {parts}")
+                    logger.debug(f"Line has {len(parts)} parts: {parts}")
                     
                     # Handle different FTP LIST formats
                     is_directory = False
@@ -266,7 +326,7 @@ class FTPManager:
                     if parts[0].startswith('d'):
                         is_directory = True
                         dirname = parts[-1]
-                        logger.info(f"Unix format detected - directory: {dirname}")
+                        logger.debug(f"Unix format detected - directory: {dirname}")
                     
                     # Windows format: MM-DD-YY HH:MMAM/PM <DIR> dirname  
                     elif len(parts) >= 3 and '<DIR>' in parts:
@@ -276,47 +336,46 @@ class FTPManager:
                             dir_index = parts.index('<DIR>')
                             if dir_index + 1 < len(parts):
                                 dirname = parts[dir_index + 1]
-                                logger.info(f"Windows format detected - directory: {dirname}")
+                                logger.debug(f"Windows format detected - directory: {dirname}")
                             else:
-                                logger.info("Windows format but no directory name after <DIR>")
+                                logger.debug("Windows format but no directory name after <DIR>")
                         except ValueError:
-                            logger.info("Windows format detection failed")
+                            logger.debug("Windows format detection failed")
                     
                     # DOS/other format: check if any part contains <DIR>
                     elif any('<DIR>' in part for part in parts):
                         is_directory = True
                         dirname = parts[-1]  # Last part as fallback
-                        logger.info(f"DOS/other format detected - directory: {dirname}")
+                        logger.debug(f"DOS/other format detected - directory: {dirname}")
                     
                     else:
-                        logger.info(f"✗ Not a directory (no 'd' prefix or <DIR> marker)")
+                        logger.debug(f"✗ Not a directory (no 'd' prefix or <DIR> marker)")
                         continue
                         
                     if is_directory and dirname:
-                        logger.info(f"Found directory candidate: {dirname}")
+                        logger.debug(f"Found directory candidate: {dirname}")
                         
                         # Check if it's a valid date directory (YYYYMMDD format)
                         if len(dirname) == 8 and dirname.isdigit():
-                            logger.info(f"Directory {dirname} matches date format")
+                            logger.debug(f"Directory {dirname} matches date format")
                             try:
                                 dir_date = datetime.strptime(dirname, "%Y%m%d")
-                                logger.info(f"Checking {dirname} -> {dir_date} vs range {start_dt} to {end_dt}")
-                                logger.info(f"Comparison: {start_dt} <= {dir_date} <= {end_dt} = {start_dt <= dir_date <= end_dt}")
+                                logger.debug(f"Checking {dirname} -> {dir_date} vs range {start_dt} to {end_dt}")
                                 
                                 if start_dt <= dir_date <= end_dt:
                                     date_dirs.append(dirname)
                                     logger.info(f"✓ Added date directory: {dirname}")
                                 else:
-                                    logger.info(f"✗ {dirname} outside range: {dir_date} not between {start_dt} and {end_dt}")
+                                    logger.debug(f"✗ {dirname} outside range: {dir_date} not between {start_dt} and {end_dt}")
                             except ValueError as e:
-                                logger.info(f"✗ Invalid date format {dirname}: {e}")
+                                logger.debug(f"✗ Invalid date format {dirname}: {e}")
                                 continue
                         else:
-                            logger.info(f"✗ {dirname} - not valid date format (length: {len(dirname)}, isdigit: {dirname.isdigit()})")
+                            logger.debug(f"✗ {dirname} - not valid date format (length: {len(dirname)}, isdigit: {dirname.isdigit()})")
                     else:
-                        logger.info(f"✗ Directory detection failed")
+                        logger.debug(f"✗ Directory detection failed")
                 else:
-                    logger.info(f"✗ Empty line or no parts")
+                    logger.debug(f"✗ Empty line or no parts")
                             
             logger.info(f"Found {len(date_dirs)} date directories in range: {date_dirs}")
             return sorted(date_dirs)
@@ -326,7 +385,7 @@ class FTPManager:
             return []
         finally:
             self.pool.return_connection(conn)
-    
+
     def list_xml_files(self, date_dir: str, file_pattern: str = None, 
                       source_directory: str = None, send_file_directory: str = None) -> List[Tuple[str, int]]:
         """List XML files in Send File directory for specific date"""
