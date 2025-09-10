@@ -1588,13 +1588,30 @@ class MainWindow(QMainWindow):
                 # Construct FTP file path
                 ftp_file_path = file_info['file_path']
                 
-                # Create local file path
-                local_file_path = os.path.join(download_dir, file_info['filename'])
+                # Create local file path with directory structure from File Path
+                # Extract directory structure from file_path (remove filename)
+                file_path_dir = os.path.dirname(file_info['file_path'])
+                # Remove leading slash if present
+                if file_path_dir.startswith('/'):
+                    file_path_dir = file_path_dir[1:]
+                elif file_path_dir.startswith('\\'):
+                    file_path_dir = file_path_dir[1:]
+                
+                # Create full local directory path
+                local_dir = os.path.join(download_dir, file_path_dir) if file_path_dir else download_dir
+                
+                # Create directory if it doesn't exist
+                os.makedirs(local_dir, exist_ok=True)
+                
+                # Create full local file path
+                local_file_path = os.path.join(local_dir, file_info['filename'])
                 
                 # Download file
                 if self.download_file_from_ftp(ftp_file_path, local_file_path):
                     successful_downloads += 1
-                    self.add_log_message(f"Downloaded: {file_info['filename']}", "SUCCESS")
+                    # Show relative path for cleaner log message
+                    relative_path = os.path.relpath(local_file_path, download_dir)
+                    self.add_log_message(f"Downloaded: {relative_path}", "SUCCESS")
                 else:
                     failed_downloads.append(file_info['filename'])
                     self.add_log_message(f"Failed to download: {file_info['filename']}", "ERROR")
@@ -1609,6 +1626,7 @@ class MainWindow(QMainWindow):
         # Show results
         if successful_downloads > 0:
             success_msg = f"Successfully downloaded {successful_downloads} file(s) to:\n{download_dir}"
+            success_msg += f"\n\nFiles are organized in subdirectories matching their FTP path structure."
             if failed_downloads:
                 success_msg += f"\n\n{len(failed_downloads)} file(s) failed to download."
             QMessageBox.information(self, "Download Complete", success_msg)
