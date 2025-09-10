@@ -56,6 +56,11 @@ class SearchProgress:
         with self.lock:
             self.matches_found += 1
     
+    def increment_files_total(self, count: int):
+        """Increment total files count (for TRUE streaming)"""
+        with self.lock:
+            self.files_total += count
+    
     def add_error(self, error: str):
         with self.lock:
             self.errors.append(error)
@@ -156,19 +161,19 @@ class SearchWorker:
                 logger.warning("No directories found in date range")
                 return []
 
-            # Initialize progress with directory count first
-            self.progress.set_totals(len(date_directories), 0)  # Files count will be updated as we go
+            # Initialize progress with unknown total files (will update as we go)
+            self.progress.set_totals(len(date_directories), 0)  
             
             # Log search info
-            logger.info(f"Found {len(date_directories)} directories for streaming search")
+            logger.info(f"Found {len(date_directories)} directories for TRUE streaming search")
             logger.info(f"Directories: {date_directories}")
             
             # Create search engine
             search_engine = self._create_search_engine(keywords, search_mode, case_sensitive)
             
-            # Process directories in streaming batches
-            logger.info(f"Starting streaming search with {max_threads} threads...")
-            return self._execute_streaming_search(
+            # Process directories in TRUE streaming batches (no pre-counting)
+            logger.info(f"Starting TRUE streaming search with {max_threads} threads...")
+            return self._execute_true_streaming_search(
                 date_directories, file_pattern, source_directory, 
                 send_file_directory, find_all_matches, search_engine, 
                 max_threads, progress_callback
@@ -176,6 +181,124 @@ class SearchWorker:
             
         except Exception as e:
             logger.error(f"FTP content search failed: {e}")
+            return []
+    
+    def _execute_true_streaming_search(self, date_directories, file_pattern, source_directory, 
+                                     send_file_directory, find_all_matches, search_engine, 
+                                     max_threads, progress_callback):
+        """Execute TRUE streaming search - process directory by directory without pre-loading"""
+        try:
+            BATCH_SIZE = 20
+            processed_directories = 0
+            total_files_processed = 0
+            
+            # Reduce thread count for very large datasets
+            effective_threads = min(max_threads, 4) if len(date_directories) > 100 else max_threads
+            logger.info(f"TRUE STREAMING: Using {effective_threads} threads, processing directories one by one")
+            
+            with ThreadPoolExecutor(max_workers=effective_threads) as executor:
+                for dir_idx, date_dir in enumerate(date_directories):
+                    if self.stop_event.is_set():
+                        break
+                        
+                    try:
+                        logger.info(f"TRUE STREAMING: Processing directory {date_dir} ({dir_idx + 1}/{len(date_directories)})")
+                        
+                        # Get files for ONLY this directory (no pre-loading)
+                        files = self.ftp_manager.list_xml_files(
+                            date_dir, file_pattern, source_directory, send_file_directory
+                        )
+                        
+                        if not files:
+                            processed_directories += 1
+                            logger.info(f"TRUE STREAMING: Directory {date_dir} is empty, skipping")
+                            continue
+                        
+                        logger.info(f"TRUE STREAMING: Found {len(files)} files in {date_dir}, processing in batches of {BATCH_SIZE}")
+                        
+                        # Update total files count progressively
+                        self.progress.increment_files_total(len(files))
+                        
+                        # Call progress callback immediately to update UI with new file count
+                        if progress_callback:
+                            status = self.progress.get_status()
+                            progress_callback(status)
+                            print(f"SEARCH DEBUG: Called progress_callback with files_total={status['files_total']}")
+                        
+                        # Process files in batches immediately
+                        for i in range(0, len(files), BATCH_SIZE):
+                            if self.stop_event.is_set():
+                                break
+                                
+                            batch = files[i:i + BATCH_SIZE]
+                            batch_tasks = []
+                            
+                            # Create tasks for this batch
+                            for filename, file_size in batch:
+                                # Skip very large files
+                                if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                                    logger.warning(f"Skipping large file: {filename} ({file_size} bytes)")
+                                    continue
+                                
+                                task = (date_dir, filename, file_size, source_directory, send_file_directory, find_all_matches)
+                                batch_tasks.append(task)
+                            
+                            if not batch_tasks:
+                                continue
+                            
+                            # Submit batch for processing
+                            future_to_task = {
+                                executor.submit(self._search_file, task, search_engine): task 
+                                for task in batch_tasks
+                            }
+                            
+                            # Wait for batch completion
+                            for future in as_completed(future_to_task):
+                                if self.stop_event.is_set():
+                                    break
+                                    
+                                try:
+                                    result = future.result()
+                                    if result:
+                                        with self.results_lock:
+                                            self.results.append(result)
+                                        self.progress.add_match()
+                                        logger.info(f"✓ Match found: {result.filename}")
+                                    
+                                    # Update progress
+                                    self.progress.update_file(future_to_task[future][1])  # filename
+                                    total_files_processed += 1
+                                    
+                                    # Call progress callback with current counts
+                                    if progress_callback:
+                                        progress_callback(self.progress.get_status())
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error processing file: {e}")
+                                    continue
+                            
+                            # Memory cleanup after each batch
+                            gc.collect()
+                            
+                            # Log batch completion
+                            logger.info(f"TRUE STREAMING: Completed batch {i//BATCH_SIZE + 1}/{(len(files) + BATCH_SIZE - 1)//BATCH_SIZE} of {date_dir} ({len(batch_tasks)} files)")
+                        
+                        processed_directories += 1
+                        self.progress.update_directory(date_dir)
+                        
+                        # Log directory completion
+                        logger.info(f"TRUE STREAMING: Completed directory {date_dir} ({processed_directories}/{len(date_directories)}) - Total processed: {total_files_processed} files")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing directory {date_dir}: {e}")
+                        processed_directories += 1
+                        continue
+            
+            logger.info(f"TRUE STREAMING: Search completed! Processed {total_files_processed} files from {processed_directories} directories, found {len(self.results)} matches")
+            return self.results.copy()
+            
+        except Exception as e:
+            logger.error(f"TRUE streaming search failed: {e}")
             return []
     
     def _execute_streaming_search(self, date_directories, file_pattern, source_directory, 
@@ -492,6 +615,14 @@ class SearchWorker:
                         continue
                     
                     logger.info(f"Found {len(files)} XML files in {date_dir}")
+                    
+                    # Update total files count for progress tracking
+                    self.progress.increment_files_total(len(files))
+                    
+                    # Call progress callback immediately to update UI with new file count
+                    if progress_callback:
+                        status = self.progress.get_status()
+                        progress_callback(status)
                     
                     # Search filenames against patterns
                     for filename, file_size in files:

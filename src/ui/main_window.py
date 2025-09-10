@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
         
     def init_ui(self):
         """Initialize user interface"""
-        self.setWindowTitle("🔍 XML Search Tool - Professional Dark Edition")
+        self.setWindowTitle("🔍 XML Search Tool - ITM Semiconductor Inc. - Developer by KhanhIT")
         self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         
         # Set window icon
@@ -838,6 +838,15 @@ class MainWindow(QMainWindow):
         matches_found = status['matches_found']
         current_file = status['current_file']
         
+        # Update top stats counters with real-time progress (for TRUE streaming)
+        if hasattr(self, 'stats_directories'):
+            self.stats_directories.setText(f"📁 Directories: {dirs_processed}/{dirs_total}")
+            self.stats_xml_files.setText(f"📄 XML Files: {files_total}")
+            self.stats_processed.setText(f"✅ Processed: {files_processed}")
+            
+            # Force update for debugging
+            print(f"DEBUG: UI Update - Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Processed: {files_processed}")
+        
         # Update progress bar (lightweight operation)
         if files_total > 0:
             progress = int((files_processed / files_total) * 100)
@@ -852,6 +861,14 @@ class MainWindow(QMainWindow):
             status_text += f" · {current_file}"
         
         self.status_label.setText(status_text)
+    
+    def force_update_counters(self, dirs_processed, dirs_total, files_total, files_processed):
+        """Force update counters without throttling (for directory scan updates)"""
+        if hasattr(self, 'stats_directories'):
+            self.stats_directories.setText(f"📁 Directories: {dirs_processed}/{dirs_total}")
+            self.stats_xml_files.setText(f"📄 XML Files: {files_total}")
+            self.stats_processed.setText(f"✅ Processed: {files_processed}")
+            print(f"FORCE UPDATE: Dirs: {dirs_processed}/{dirs_total}, Files: {files_total}, Processed: {files_processed}")
     
     def on_search_completed(self, results: List[SearchResult]):
         """Handle search completion"""
