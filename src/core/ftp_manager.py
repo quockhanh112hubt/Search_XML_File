@@ -508,3 +508,23 @@ class FTPManager:
                 logger.error(f"Error closing main FTP connection: {e}")
         
         self.is_connected = False
+    
+    def download_file(self, ftp_file_path: str, local_file_path: str) -> bool:
+        """Download a file from FTP server to local path"""
+        try:
+            conn = self.pool.get_connection()
+            if not conn:
+                logger.error("Failed to get FTP connection from pool")
+                return False
+            
+            try:
+                with open(local_file_path, 'wb') as local_file:
+                    conn.ftp.retrbinary(f'RETR {ftp_file_path}', local_file.write)
+                logger.info(f"Successfully downloaded: {ftp_file_path}")
+                return True
+            finally:
+                self.pool.return_connection(conn)
+                
+        except Exception as e:
+            logger.error(f"Download failed for {ftp_file_path}: {e}")
+            return False

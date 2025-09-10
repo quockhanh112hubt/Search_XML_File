@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QTableWidget, QTableWidgetItem,
     QComboBox, QCheckBox, QDateEdit, QProgressBar, QStatusBar, QTabWidget,
     QGroupBox, QSplitter, QHeaderView, QMessageBox, QFileDialog,
-    QSpinBox, QFrame
+    QSpinBox, QFrame, QMenu, QProgressDialog, QApplication
 )
 from PyQt5.QtCore import QDate, QThread, pyqtSignal, QTimer, Qt, QObject
 from PyQt5.QtGui import QFont, QIcon
@@ -72,6 +72,7 @@ class MainWindow(QMainWindow):
         self.search_worker = None
         self.search_thread = None
         self.search_results = []
+        self.current_search_source = None  # Track current search source for downloads
         
         # Initialize settings manager
         self.settings_manager = SettingsManager()
@@ -435,6 +436,10 @@ class MainWindow(QMainWindow):
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setSelectionBehavior(QTableWidget.SelectRows)
         
+        # Enable context menu for downloads
+        self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self.show_results_context_menu)
+        
         layout.addWidget(self.results_table)
         
         # Add to tab
@@ -768,6 +773,7 @@ class MainWindow(QMainWindow):
         # Clear previous results
         self.results_table.setRowCount(0)
         self.search_results = []
+        self.current_search_source = search_source  # Save search source for download functionality
         self.update_results_display()
         
         # Start search
@@ -1425,3 +1431,196 @@ class MainWindow(QMainWindow):
                 self.update_connection_status(f"Selected directory with {xml_count} XML files", 'success')
             except Exception as e:
                 self.update_connection_status(f"Directory selected: {os.path.basename(directory)}", 'info')
+    
+    def show_results_context_menu(self, position):
+        """Show context menu for results table with download options"""
+        if self.results_table.rowCount() == 0:
+            return
+            
+        # Check if we have FTP results (only FTP results can be downloaded)
+        current_row = self.results_table.rowAt(position.y())
+        if current_row == -1:
+            return
+            
+        # Only show download option for FTP search results
+        if not self.current_search_source or "Local Directory" in self.current_search_source:
+            return  # No download for local directory searches
+            
+        # Get selected rows
+        selected_rows = set()
+        for item in self.results_table.selectedItems():
+            selected_rows.add(item.row())
+        
+        # If no selection and cursor is on a row, select that row
+        if not selected_rows and current_row >= 0:
+            selected_rows.add(current_row)
+            self.results_table.selectRow(current_row)
+        
+        if not selected_rows:
+            return
+            
+        # Collect file information for download
+        downloadable_files = []
+        for row in selected_rows:
+            filename = self.results_table.item(row, 1).text()  # Filename column
+            file_path = self.results_table.item(row, 2).text()  # File Path column  
+            date = self.results_table.item(row, 0).text()  # Date column
+            
+            if filename and file_path:
+                downloadable_files.append({
+                    'filename': filename,
+                    'file_path': file_path,
+                    'date': date,
+                    'row': row
+                })
+        
+        if not downloadable_files:
+            return
+            
+        # Create context menu
+        context_menu = QMenu(self)
+        context_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['bg_secondary']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 8px 16px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['primary']};
+                color: white;
+            }}
+        """)
+        
+        # Add download actions
+        if len(downloadable_files) == 1:
+            download_action = context_menu.addAction(f"📥 Download '{downloadable_files[0]['filename']}'")
+        else:
+            download_action = context_menu.addAction(f"📥 Download {len(downloadable_files)} files")
+        
+        download_action.triggered.connect(lambda: self.download_selected_files(downloadable_files))
+        
+        # Show context menu
+        context_menu.exec_(self.results_table.mapToGlobal(position))
+    
+    def download_selected_files(self, files_to_download):
+        """Download selected XML files from FTP server"""
+        if not self.ftp_manager.is_connected:
+            QMessageBox.warning(self, "Warning", "Not connected to FTP server!\nPlease connect first.")
+            return
+            
+        # Ask user to select download directory
+        download_dir = QFileDialog.getExistingDirectory(
+            self, 
+            "Select Download Directory",
+            os.path.expanduser("~/Downloads")
+        )
+        
+        if not download_dir:
+            return
+            
+        # Create progress dialog
+        progress_dialog = QProgressDialog(
+            f"Downloading {len(files_to_download)} file(s)...", 
+            "Cancel", 
+            0, 
+            len(files_to_download), 
+            self
+        )
+        progress_dialog.setWindowTitle("Downloading Files")
+        progress_dialog.setModal(True)
+        progress_dialog.setStyleSheet(f"""
+            QProgressDialog {{
+                background-color: {COLORS['bg_primary']};
+                color: {COLORS['text_primary']};
+            }}
+            QProgressBar {{
+                border: 2px solid {COLORS['border']};
+                border-radius: 8px;
+                text-align: center;
+                background-color: {COLORS['bg_secondary']};
+                color: {COLORS['text_primary']};
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background-color: {COLORS['primary']};
+                border-radius: 6px;
+            }}
+        """)
+        progress_dialog.show()
+        
+        # Download files
+        successful_downloads = 0
+        failed_downloads = []
+        
+        for i, file_info in enumerate(files_to_download):
+            if progress_dialog.wasCanceled():
+                break
+                
+            try:
+                # Update progress
+                progress_dialog.setLabelText(f"Downloading: {file_info['filename']}")
+                progress_dialog.setValue(i)
+                QApplication.processEvents()
+                
+                # Construct FTP file path
+                ftp_file_path = file_info['file_path']
+                
+                # Create local file path
+                local_file_path = os.path.join(download_dir, file_info['filename'])
+                
+                # Download file
+                if self.download_file_from_ftp(ftp_file_path, local_file_path):
+                    successful_downloads += 1
+                    self.add_log_message(f"Downloaded: {file_info['filename']}", "SUCCESS")
+                else:
+                    failed_downloads.append(file_info['filename'])
+                    self.add_log_message(f"Failed to download: {file_info['filename']}", "ERROR")
+                    
+            except Exception as e:
+                failed_downloads.append(file_info['filename'])
+                self.add_log_message(f"Download error for {file_info['filename']}: {str(e)}", "ERROR")
+        
+        progress_dialog.setValue(len(files_to_download))
+        progress_dialog.close()
+        
+        # Show results
+        if successful_downloads > 0:
+            success_msg = f"Successfully downloaded {successful_downloads} file(s) to:\n{download_dir}"
+            if failed_downloads:
+                success_msg += f"\n\n{len(failed_downloads)} file(s) failed to download."
+            QMessageBox.information(self, "Download Complete", success_msg)
+        else:
+            QMessageBox.warning(self, "Download Failed", f"Failed to download files:\n" + "\n".join(failed_downloads))
+    
+    def download_file_from_ftp(self, ftp_path, local_path):
+        """Download a single file from FTP server"""
+        try:
+            # Get FTP settings for path construction
+            source_dir = self.source_directory.text().strip() or "SAMSUNG"
+            
+            # Construct correct FTP path based on SearchResult file_path format
+            if ftp_path.startswith('/'):
+                # SearchResult creates path like "/20250901/Send File/filename.xml"
+                # We need to prepend source directory to make it "/SAMSUNG/20250901/Send File/filename.xml"
+                if not ftp_path.startswith(f'/{source_dir}/'):
+                    full_ftp_path = f"/{source_dir}{ftp_path}"
+                else:
+                    full_ftp_path = ftp_path
+            else:
+                # If relative path, construct full path
+                full_ftp_path = f"/{source_dir}/{ftp_path}"
+            
+            self.add_log_message(f"Downloading from FTP path: {full_ftp_path}", "INFO")
+            
+            # Use FTP manager's new download method
+            return self.ftp_manager.download_file(full_ftp_path, local_path)
+            
+        except Exception as e:
+            self.add_log_message(f"FTP download error for {ftp_path}: {str(e)}", "ERROR")
+            return False
