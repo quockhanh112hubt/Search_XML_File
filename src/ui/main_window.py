@@ -194,15 +194,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(date_group)
         
         # File filter group
-        filter_group = QGroupBox("File Filter")
-        filter_layout = QGridLayout(filter_group)
+        self.filter_group = QGroupBox("File Filter")
+        filter_layout = QGridLayout(self.filter_group)
         
         filter_layout.addWidget(QLabel("File Pattern:"), 0, 0)
         self.file_pattern = QLineEdit(DEFAULT_FILE_PATTERN)
         self.file_pattern.setPlaceholderText("e.g., TCO_*_KMC_*.xml")
+        self.file_pattern.setMinimumHeight(30)  # Increase height to prevent text clipping
         filter_layout.addWidget(self.file_pattern, 0, 1, 1, 2)
         
-        layout.addWidget(filter_group)
+        layout.addWidget(self.filter_group)
         
         # Search parameters group
         search_group = QGroupBox("Search Parameters")
@@ -224,10 +225,12 @@ class MainWindow(QMainWindow):
         self.local_dir_input = QLineEdit()
         self.local_dir_input.setPlaceholderText("Select directory containing XML files...")
         self.local_dir_input.setReadOnly(True)
+        self.local_dir_input.setMinimumHeight(30)  # Match height with other inputs
         self.local_dir_browse = QPushButton("Browse...")
         self.local_dir_browse.clicked.connect(self.browse_local_directory)
         self.local_dir_browse.setStyleSheet(BUTTON_STYLES['secondary'])
-        self.local_dir_browse.setMaximumWidth(80)
+        self.local_dir_browse.setMinimumWidth(100)  # Increase width to show full text
+        self.local_dir_browse.setMinimumHeight(30)  # Match height with other inputs
         
         search_layout.addWidget(self.local_dir_label, 1, 0)
         search_layout.addWidget(self.local_dir_input, 1, 1)
@@ -247,6 +250,7 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(QLabel("Search Mode:"), 4, 0)
         self.search_mode = QComboBox()
         self.search_mode.addItems(["Text Contains", "Regex Pattern", "XPath Query"])
+        self.search_mode.setMinimumHeight(30)  # Match height with other inputs
         search_layout.addWidget(self.search_mode, 4, 1)
         
         self.case_sensitive = QCheckBox("Case Sensitive")
@@ -1325,10 +1329,16 @@ class MainWindow(QMainWindow):
         
         # Update file pattern and keywords based on search mode
         if is_local:
-            # Local Directory Search
+            # Local Directory Search - resize for better UX
             self.file_pattern.clear()
             self.file_pattern.setPlaceholderText("e.g., *.xml or leave empty for all XML files")
             self.keywords_input.setPlaceholderText("Enter content keywords to search (one per line)")
+            
+            # Resize components for local search
+            self.filter_group.setMaximumHeight(90)  # Compact file filter
+            self.filter_group.setMinimumHeight(90)
+            self.keywords_input.setMaximumHeight(520)  # Expand keywords area
+            self.keywords_input.setMinimumHeight(120)
             
         elif is_filename_only:
             # FTP Filename Only Search
@@ -1336,12 +1346,24 @@ class MainWindow(QMainWindow):
             self.file_pattern.setPlaceholderText("e.g., *.xml (filename pattern to search)")
             self.keywords_input.setPlaceholderText("Enter filename patterns to match (e.g., ABC, KMC, LDT)")
             
+            # Standard size for filename search
+            self.filter_group.setMaximumHeight(100)
+            self.filter_group.setMinimumHeight(80)
+            self.keywords_input.setMaximumHeight(200)
+            self.keywords_input.setMinimumHeight(80)
+            
         else:  # FTP Content Search
             # FTP Content Search (default)
             if not self.file_pattern.text().strip():
                 self.file_pattern.setText("TCO_*_KMC_*.xml")
             self.file_pattern.setPlaceholderText("e.g., TCO_*_KMC_*.xml")
             self.keywords_input.setPlaceholderText("Enter content keywords to search (one per line)")
+            
+            # Standard size for FTP content search
+            self.filter_group.setMaximumHeight(100)
+            self.filter_group.setMinimumHeight(80)
+            self.keywords_input.setMaximumHeight(200)
+            self.keywords_input.setMinimumHeight(80)
         
         # Show/hide date range for local search (local search doesn't use date-based directories)
         date_group = self.findChild(QGroupBox, "DateRangeGroup")
