@@ -350,36 +350,79 @@ PROGRESS_STYLES = f"""
     }}
 """
 
-# Checkbox styles - Simple and Working
+# Checkbox styles - Modern and Beautiful
 CHECKBOX_STYLES = f"""
     QCheckBox {{
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 500;
         color: {COLORS['text_primary']};
-        spacing: 10px;
+        spacing: 12px;
+        padding: 4px 0px;
     }}
+    
+    /* Modern checkbox indicator */
     QCheckBox::indicator {{
-        width: 22px;
-        height: 22px;
+        width: 20px;
+        height: 20px;
         border: 2px solid {COLORS['border']};
-        border-radius: 6px;
+        border-radius: 4px;
+        background-color: {COLORS['bg_primary']};
+        margin: 1px;
     }}
+    
+    /* Unchecked state */
     QCheckBox::indicator:unchecked {{
         background-color: {COLORS['bg_primary']};
         border: 2px solid {COLORS['border']};
     }}
+    
+    /* Checked state with checkmark */
     QCheckBox::indicator:checked {{
         background-color: {COLORS['primary']};
         border: 2px solid {COLORS['primary']};
+        color: white;
+        font-weight: bold;
+        font-size: 14px;
+        text-align: center;
     }}
-    QCheckBox::indicator:hover {{
-        border-color: {COLORS['primary']};
-    }}
+    
+    /* Hover effects */
     QCheckBox::indicator:unchecked:hover {{
+        border-color: {COLORS['primary']};
         background-color: {COLORS['primary_light']};
     }}
+    
     QCheckBox::indicator:checked:hover {{
         background-color: {COLORS['primary_hover']};
+        border-color: {COLORS['primary_hover']};
+    }}
+    
+    /* Focus state */
+    QCheckBox::indicator:focus {{
+        outline: none;
+        border-color: {COLORS['primary']};
+    }}
+    
+    /* Disabled state */
+    QCheckBox::indicator:disabled {{
+        background-color: {COLORS['bg_secondary']};
+        border-color: {COLORS['secondary']};
+        opacity: 0.5;
+    }}
+    
+    QCheckBox:disabled {{
+        color: {COLORS['text_light']};
+        opacity: 0.6;
+    }}
+    
+    /* Text styling for different states */
+    QCheckBox:checked {{
+        color: {COLORS['primary']};
+        font-weight: 600;
+    }}
+    
+    QCheckBox:hover {{
+        color: {COLORS['text_white']};
     }}
 """
 

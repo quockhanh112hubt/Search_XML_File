@@ -615,41 +615,150 @@ class MainWindow(QMainWindow):
         self.connection_status.setStyleSheet(f"color: {color}; font-weight: bold;")
     
     def setup_custom_checkbox(self, checkbox):
-        """Setup custom checkbox with checkmark display"""
+        """Setup custom checkbox with modern styling and beautiful checkmark display"""
+        
         def update_checkbox_style():
+            # Get clean text without any checkmark symbols
+            current_text = checkbox.text()
+            clean_text = current_text.replace('✓ ', '').replace('☑ ', '').replace('✔ ', '').replace('✅ ', '')
+            
             if checkbox.isChecked():
-                checkbox.setText(f"✓ {checkbox.text().replace('✓ ', '')}")
+                # Add checkmark to text with modern styling
+                checkbox.setText(f"✓ {clean_text}")
+                
+                # Apply checked state styling with beautiful effects
                 checkbox.setStyleSheet(f"""
                     QCheckBox {{
-                        color: {COLORS['primary']};
+                        font-size: 14px;
                         font-weight: 600;
+                        color: {COLORS['primary']};
+                        spacing: 12px;
+                        padding: 4px 0px;
+                        background-color: transparent;
                     }}
+                    
                     QCheckBox::indicator {{
                         width: 22px;
                         height: 22px;
                         border: 2px solid {COLORS['primary']};
-                        border-radius: 6px;
+                        border-radius: 5px;
                         background-color: {COLORS['primary']};
+                        margin: 1px;
+                    }}
+                    
+                    QCheckBox::indicator:checked {{
+                        background-color: {COLORS['primary']};
+                        border: 2px solid {COLORS['primary']};
+                        color: white;
+                        font-weight: bold;
+                        font-size: 16px;
+                        font-family: "Segoe UI Symbol", "Arial Unicode MS";
+                    }}
+                    
+                    QCheckBox::indicator:checked:hover {{
+                        background-color: {COLORS['primary_hover']};
+                        border-color: {COLORS['primary_hover']};
+                        transform: scale(1.05);
+                    }}
+                    
+                    QCheckBox::indicator:checked:pressed {{
+                        background-color: #1e40af;
                     }}
                 """)
             else:
-                checkbox.setText(checkbox.text().replace('✓ ', ''))
+                # Remove checkmark from text
+                checkbox.setText(clean_text)
+                
+                # Apply unchecked state styling with smooth hover effects
                 checkbox.setStyleSheet(f"""
                     QCheckBox {{
-                        color: {COLORS['text_primary']};
+                        font-size: 14px;
                         font-weight: 500;
+                        color: {COLORS['text_primary']};
+                        spacing: 12px;
+                        padding: 4px 0px;
+                        background-color: transparent;
                     }}
+                    
                     QCheckBox::indicator {{
                         width: 22px;
                         height: 22px;
                         border: 2px solid {COLORS['border']};
-                        border-radius: 6px;
+                        border-radius: 5px;
                         background-color: {COLORS['bg_primary']};
+                        margin: 1px;
+                    }}
+                    
+                    QCheckBox::indicator:unchecked:hover {{
+                        border-color: {COLORS['primary']};
+                        background-color: {COLORS['primary_light']};
+                        transform: scale(1.05);
+                    }}
+                    
+                    QCheckBox::indicator:unchecked:pressed {{
+                        background-color: {COLORS['bg_secondary']};
+                    }}
+                    
+                    QCheckBox:hover {{
+                        color: {COLORS['text_white']};
                     }}
                 """)
         
+        # Connect state change signal
         checkbox.stateChanged.connect(lambda: update_checkbox_style())
-        update_checkbox_style()  # Initial setup
+        
+        # Apply initial styling
+        update_checkbox_style()
+        
+        # Add mouse tracking for better hover effects
+        checkbox.setMouseTracking(True)
+        
+        # Add tooltip for better UX if not already set
+        if not checkbox.toolTip():
+            checkbox.setToolTip("Click to toggle this option")
+            
+        # Override the paintEvent to draw custom checkmark
+        original_paint_event = checkbox.paintEvent
+        
+        def custom_paint_event(event):
+            # Call original paint event
+            original_paint_event(event)
+            
+            # If checked, draw custom checkmark
+            if checkbox.isChecked():
+                from PyQt5.QtGui import QPainter, QPen, QFont
+                from PyQt5.QtCore import Qt
+                
+                painter = QPainter(checkbox)
+                painter.setRenderHint(QPainter.Antialiasing)
+                
+                # Get indicator rectangle
+                style = checkbox.style()
+                from PyQt5.QtWidgets import QStyleOptionButton
+                option = QStyleOptionButton()
+                option.initFrom(checkbox)
+                
+                indicator_rect = style.subElementRect(
+                    style.SE_CheckBoxIndicator, option, checkbox
+                )
+                
+                # Set font for checkmark
+                font = QFont("Segoe UI Symbol")
+                font.setPixelSize(14)
+                font.setBold(True)
+                painter.setFont(font)
+                
+                # Set pen color
+                pen = QPen(Qt.white)
+                painter.setPen(pen)
+                
+                # Draw checkmark symbol
+                painter.drawText(indicator_rect, Qt.AlignCenter, "✓")
+                
+                painter.end()
+        
+        # Replace the paint event
+        checkbox.paintEvent = custom_paint_event
     
     def update_results_count_style(self, count: int):
         """Update results count with proper styling"""
