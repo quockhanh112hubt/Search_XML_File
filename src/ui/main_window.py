@@ -624,7 +624,7 @@ class MainWindow(QMainWindow):
             
             if checkbox.isChecked():
                 # Add checkmark to text with modern styling
-                checkbox.setText(f"✓ {clean_text}")
+                checkbox.setText(f"{clean_text}")
                 
                 # Apply checked state styling with beautiful effects
                 checkbox.setStyleSheet(f"""
