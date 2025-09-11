@@ -514,7 +514,6 @@ class MainWindow(QMainWindow):
             QLabel:hover {{
                 background-color: {COLORS['primary']};
                 color: white;
-                cursor: pointer;
                 border: 1px solid {COLORS['primary']};
             }}
         """
@@ -658,7 +657,6 @@ class MainWindow(QMainWindow):
                     QCheckBox::indicator:checked:hover {{
                         background-color: {COLORS['primary_hover']};
                         border-color: {COLORS['primary_hover']};
-                        transform: scale(1.05);
                     }}
                     
                     QCheckBox::indicator:checked:pressed {{
@@ -692,7 +690,6 @@ class MainWindow(QMainWindow):
                     QCheckBox::indicator:unchecked:hover {{
                         border-color: {COLORS['primary']};
                         background-color: {COLORS['primary_light']};
-                        transform: scale(1.05);
                     }}
                     
                     QCheckBox::indicator:unchecked:pressed {{
