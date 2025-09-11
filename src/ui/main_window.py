@@ -808,11 +808,14 @@ class MainWindow(QMainWindow):
         # Reset download button
         self.update_download_button_state(0)
         
+        # Clear logs before starting new search
+        self.clear_logs()
+        
         # Start search
         self.search_thread.start()
         
-        # Switch to results tab
-        self.tab_widget.setCurrentIndex(2)
+        # Switch to logs tab to show search progress
+        self.tab_widget.setCurrentIndex(3)  # Logs tab is index 3
     
     def stop_search(self):
         """Stop search operation"""
@@ -892,6 +895,9 @@ class MainWindow(QMainWindow):
         
         # Update download button state
         self.update_download_button_state(0)  # No selection initially
+        
+        # Switch to results tab when search is completed
+        self.tab_widget.setCurrentIndex(2)  # Results tab is index 2
     
     def on_search_error(self, error_message: str):
         """Handle search error"""
@@ -899,6 +905,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.progress_bar.setVisible(False)
         self.status_label.setText("Search failed")
+        
+        # Switch to results tab when search fails
+        self.tab_widget.setCurrentIndex(2)  # Results tab is index 2
         
         QMessageBox.critical(self, "Search Error", f"Search failed: {error_message}")
     
